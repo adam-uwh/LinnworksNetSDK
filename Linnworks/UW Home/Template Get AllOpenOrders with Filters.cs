@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using LinnworksAPI;
 using LinnworksMacroHelpers.Classes;
 using System.ComponentModel;
+using System.Text;
 
 namespace LinnworksMacro
 {
@@ -19,76 +20,16 @@ namespace LinnworksMacro
             Logger.WriteInfo("Starting order retrieval with filters:");
             Logger.WriteInfo($"SubSources: {subSources}, Tag: {tagNumber}, LastDays: {lastDays}, IgnoreUnknownSKUs: {ignoreUnknownSKUs}");
 
-            var sortedOrders = GetOrderDetails(subSources, lastDays, ignoreUnknownSKUs);
+            var sortedOrders = GetOrderDetails(subSources, tagNumber, lastDays, ignoreUnknownSKUs);
 
             Logger.WriteInfo($"Total orders returned: {sortedOrders.Count}");
             foreach (var order in sortedOrders)
             {
                 Logger.WriteInfo($"OrderId: {order.OrderId}, Reference: {order.GeneralInfo.ReferenceNum}, NumOrderId: {order.NumOrderId}, Items: {order.Items.Count}");
             }
-
-            foreach (var order in sortedOrders)
-            {
-                bool insufficientStock = false;
-
-                foreach (var item in order.Items)
-                {
-                    var request = new LinnworksAPI.GetStockLevelByLocationRequest
-                    {
-                        StockItemId = item.StockItemId,
-                        LocationId = new Guid("132db06e-f55d-40d1-9705-67fa0068dc3c") // replace with your actual location if needed
-                    };
-
-                    var stockItemLevel = Api.Stock.GetStockLevelByLocation(request);
-                    if (stockItemLevel == null)
-                    {
-                        Logger.WriteError($"Stock item not found for item {item.StockItemId} in order {order.OrderId}");
-                        insufficientStock = true;
-                        break;
-                    }
-
-                    // Null or negative available stock is insufficient
-                    if (stockItemLevel.StockLevel == null ||
-                        stockItemLevel.StockLevel.Available < item.Quantity ||
-                        stockItemLevel.StockLevel.Available < 0)
-                    {
-                        insufficientStock = true;
-                        Logger.WriteInfo(
-                            $"Insufficient stock for item {item.StockItemId} in order {order.OrderId}: required {item.Quantity}, available {(stockItemLevel.StockLevel?.Available.ToString() ?? "null")}"
-                        );
-                        break;
-                    }
-                }
-
-                if (!insufficientStock)
-                {
-                    try
-                    {
-                        Api.Orders.ChangeStatus(new List<Guid> { order.OrderId }, 1); // Set to PAID
-                        Logger.WriteInfo($"Order {order.OrderId} status changed to PAID.");
-
-                        Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, tagNumber); // Tag 6
-                        Logger.WriteInfo($"Order {order.OrderId} tagged with {tagNumber}.");
-
-                        // Add order note without overwriting existing notes
-                        var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
-                        existingNotes.Add(new OrderNote
-                        {
-                            Note = "Order updated to PAID as stock now available for all lines.",
-                            CreatedBy = "Rules Engine"
-                        });
-                        Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
-                        Logger.WriteInfo($"Order note added to order {order.OrderId}.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.WriteError($"Failed to update order {order.OrderId}: {ex.Message}");
-                    }
-                }
-            }
         }
 
-        private List<OrderDetails> GetOrderDetails(string subSources, int lastDays, bool ignoreUnknownSKUs)
+        private List<OrderDetails> GetOrderDetails(string subSources, int tagNumber, int lastDays, bool ignoreUnknownSKUs)
         {
             List<OrderDetails> orders = new List<OrderDetails>();
 
@@ -97,7 +38,9 @@ namespace LinnworksMacro
             {
                 NumericFields = new List<NumericFieldFilter>()
                 {
-                    new NumericFieldFilter() { FieldCode = FieldCode.GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 0 }
+                    new NumericFieldFilter() { FieldCode = FieldCode.GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 0 },
+                    new NumericFieldFilter() { FieldCode = FieldCode.GENERAL_INFO_TAG, Type = NumericFieldFilterType.Equal, Value = tagNumber }
+                    
                 },
                 TextFields = new List<TextFieldFilter>(),
                 DateFields = new List<DateFieldFilter>()
@@ -105,7 +48,7 @@ namespace LinnworksMacro
                     new DateFieldFilter()
                     {
                         FieldCode = FieldCode.GENERAL_INFO_DATE,
-                        Type = DateTimeFieldFilterType.OlderThan,
+                        Type = DateTimeFieldFilterType.LastDays,
                         Value = lastDays
                     }
                 }

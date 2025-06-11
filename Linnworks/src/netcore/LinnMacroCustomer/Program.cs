@@ -7,22 +7,21 @@ namespace LinnMacroCustomer
         public static void Main(string[] args)
         {
             //Replace the following with your application details and installation token
-            Guid applicationId = Guid.NewGuid();
-            Guid secretKey = Guid.NewGuid();
-            Guid token = Guid.NewGuid();
+            Guid applicationId = new Guid("9509e3bb-f2e2-4857-b526-196f240e037d");
+            Guid secretKey = new Guid("e5e6cd0c-23bf-4028-939a-2ed7d37ec089");
+            Guid token = new Guid("fc227e55-5c7c-7076-1794-a0350cebdff2");
 
             var macro = SetupMacro(applicationId, secretKey, token);
 
-            var result = macro.Execute(new Guid("37d8fb79-4eea-401b-911a-d5cb04db61a4"));
+            // Example values - replace with your actual values or get them from user input/config
+            string subSources = "Dunelm 21";
+            int tagNumber = 6;
+            int lastDays = 1;
+            bool ignoreUnknownSKUs = true;
 
-            if (result == null)
-            {
-                Console.WriteLine("Stock item not found");
-            }
-            else
-            {
-                Console.WriteLine(result.ItemNumber);
-            }
+macro.Execute(subSources, tagNumber, lastDays, ignoreUnknownSKUs);
+
+            Console.WriteLine("Order checked");
             Console.Read();
         }
 
