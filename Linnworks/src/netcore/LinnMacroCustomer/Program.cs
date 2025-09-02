@@ -14,12 +14,49 @@ namespace LinnMacroCustomer
             var macro = SetupMacro(applicationId, secretKey, token);
 
             // Example values - replace with your actual values or get them from user input/config
-            string subSources = "Dunelm 21";
-            int tagNumber = 6;
-            int lastDays = 1;
-            bool ignoreUnknownSKUs = true;
+            //string locationId = "00000000-0000-0000-0000-000000000000"; // Example location ID
+            //bool ignoreUnknownSKUs = true;
+            string subSource = "MultiVery";
+            string notifyAcknowledge = "TRUE";
+            string notifyOOS = "FALSE";
+            string notifyBIS = "FALSE";
+            string notifyShipped = "FALSE";
+            string notifyCancelled = "FALSE";
+            int tagValue = 6;
+            string newFolder = "New";
+            string oosFolder = "Out of Stock";
+            string bisFolder = "Back in Stock";
+            string SFTPServer = "sftp.jrslsecure.com/";
+            int SFTPPort = 22;
+            string SFTPUsername = "";
+            string SFTPPassword = "";
+            string SFTPFolderRoot = "DSV Operations/Customers/";
+            string acknowledgeDirectory = "Notify-Acknowledged/";
+            string oosDirectory = "Notify-OOS/";
+            string bisDirectory = "Notify-BIS/";
+            string shippedDirectory = "Notify-Shipped/";
+            string cancelDirectory = "Notify-Cancelled/";
+            string filetype = "Direct"; //Direct or API
+            string sortField = "GENERAL_INFO_ORDER_ID";
+            string sortDirection = "ASC";
+            int lookBackDays = 5;
+            string Source = "DATAIMPORTEXPORT";
 
-macro.Execute(subSources, tagNumber, lastDays, ignoreUnknownSKUs);
+            macro.Execute(subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays, Source);
+
+            //macro.Execute(
+            //orderIds,
+            //true,  // removeFromCompanyName
+            //true,  // removeFromCustomerName
+            //true,  // removeFromAddressLines
+            //true,  // removeFromTownAndRegion
+            //true,   // removeFromCountry
+            //true   // removeFromPostCode
+            //);
+
+            //var orderIds = new Guid[] { new Guid("c53e6d3c-be84-4285-9700-aabf7e82fdc0") };
+
+            //macro.Execute(orderIds);
 
             Console.WriteLine("Order checked");
             Console.Read();
@@ -56,3 +93,4 @@ macro.Execute(subSources, tagNumber, lastDays, ignoreUnknownSKUs);
         }
     }
 }
+

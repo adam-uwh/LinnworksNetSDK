@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using LinnworksAPI;
 using LinnworksMacroHelpers.Classes;
 using System.ComponentModel;
@@ -10,188 +11,229 @@ namespace LinnworksMacro
     public class LinnworksMacro : LinnworksMacroHelpers.LinnworksMacroBase
     {
         public void Execute(
-            string subSources,
-            int tagNumber,
-            int lastDays,
-            bool ignoreUnknownSKUs
+            string subSource,
+            string notifyAcknowledge,
+            string notifyOOS,
+            string notifyBIS,
+            string notifyShipped,
+            string notifyCancelled,
+            int tagValue,
+            string newFolder,
+            string oosFolder,
+            string bisFolder,
+            string SFTPServer,
+            int SFTPPort,
+            string SFTPUsername,
+            string SFTPPassword,
+            string SFTPFolderRoot,
+            string acknowledgeDirectory,
+            string oosDirectory,
+            string bisDirectory,
+            string shippedDirectory,
+            string cancelDirectory,
+            string filetype,
+            string sortField,
+            string sortDirection,
+            int lookBackDays,
+            string Source
         )
         {
-            Logger.WriteInfo("Starting order retrieval with filters:");
-            Logger.WriteInfo($"SubSources: {subSources}, Tag: {tagNumber}, LastDays: {lastDays}, IgnoreUnknownSKUs: {ignoreUnknownSKUs}");
+            this.Logger.WriteInfo("Starting macro channel updater");
 
-            var sortedOrders = GetOrderDetails(subSources, lastDays, ignoreUnknownSKUs);
-
-            Logger.WriteInfo($"Total orders returned: {sortedOrders.Count}");
-            foreach (var order in sortedOrders)
+            var notificationConfigs = new[]
             {
-                Logger.WriteInfo($"OrderId: {order.OrderId}, Reference: {order.GeneralInfo.ReferenceNum}, NumOrderId: {order.NumOrderId}, Items: {order.Items.Count}");
-            }
+                new { Notify = notifyAcknowledge, Folder = newFolder, Directory = acknowledgeDirectory, Type = "Open" },
+                new { Notify = notifyOOS, Folder = oosFolder, Directory = oosDirectory, Type = "Open" },
+                new { Notify = notifyBIS, Folder = bisFolder, Directory = bisDirectory, Type = "Open" },
+                new { Notify = notifyShipped, Folder = shippedDirectory, Directory = shippedDirectory, Type = "Shipped" },
+                new { Notify = notifyCancelled, Folder = cancelDirectory, Directory = cancelDirectory, Type = "Cancelled" }
+            };
 
-            foreach (var order in sortedOrders)
+            foreach (var config in notificationConfigs)
             {
-                bool insufficientStock = false;
+                if (!string.Equals(config.Notify, "TRUE", StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-                foreach (var item in order.Items)
+                List<OrderDetails> orders = new List<OrderDetails>();
+
+                if (config.Type == "Open")
                 {
-                    var request = new LinnworksAPI.GetStockLevelByLocationRequest
-                    {
-                        StockItemId = item.StockItemId,
-                        LocationId = new Guid("132db06e-f55d-40d1-9705-67fa0068dc3c") // replace with your actual location if needed
-                    };
-
-                    var stockItemLevel = Api.Stock.GetStockLevelByLocation(request);
-                    if (stockItemLevel == null)
-                    {
-                        Logger.WriteError($"Stock item not found for item {item.StockItemId} in order {order.OrderId}");
-                        insufficientStock = true;
-                        break;
-                    }
-
-                    // Null or negative available stock is insufficient
-                    if (stockItemLevel.StockLevel == null ||
-                        stockItemLevel.StockLevel.Available < item.Quantity ||
-                        stockItemLevel.StockLevel.Available < 0)
-                    {
-                        insufficientStock = true;
-                        Logger.WriteInfo(
-                            $"Insufficient stock for item {item.StockItemId} in order {order.OrderId}: required {item.Quantity}, available {(stockItemLevel.StockLevel?.Available.ToString() ?? "null")}"
-                        );
-                        break;
-                    }
+                    orders = GetFilteredOpenOrders(subSource, config.Folder, tagValue, sortField, sortDirection);
+                }
+                else
+                {
+                    bool isShipped = config.Type == "Shipped";
+                    orders = GetFilteredProcessedOrders(subSource, Source, sortField, sortDirection, lookBackDays, isShipped);
                 }
 
-                if (!insufficientStock)
+                if (orders.Count == 0)
                 {
-                    try
-                    {
-                        Api.Orders.ChangeStatus(new List<Guid> { order.OrderId }, 1); // Set to PAID
-                        Logger.WriteInfo($"Order {order.OrderId} status changed to PAID.");
-
-                        Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, tagNumber); // Tag 6
-                        Logger.WriteInfo($"Order {order.OrderId} tagged with {tagNumber}.");
-
-                        // Add order note without overwriting existing notes
-                        var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
-                        existingNotes.Add(new OrderNote
-                        {
-                            Note = "Order updated to PAID as stock now available for all lines.",
-                            CreatedBy = "Rules Engine"
-                        });
-                        Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
-                        Logger.WriteInfo($"Order note added to order {order.OrderId}.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.WriteError($"Failed to update order {order.OrderId}: {ex.Message}");
-                    }
+                    this.Logger.WriteInfo($"No orders found for folder {config.Folder}");
+                    continue;
                 }
+
+                var csv = GenerateCsv(orders);
+                var sftpSettings = new SFtpSettings
+                {
+                    UserName = SFTPUsername,
+                    Password = SFTPPassword,
+                    Server = SFTPServer.StartsWith("sftp://") ? SFTPServer : $"sftp://{SFTPServer}",
+                    Port = SFTPPort,
+                    FullPath = $"{SFTPFolderRoot}/{config.Directory}/"
+                };
+
+                var fileName = $"Orders_{config.Folder}_{DateTime.Now:yyyyMMddHHmmss}.{filetype}";
+                sftpSettings.FullPath += fileName;
+
+                if (SendByFTP(csv, sftpSettings))
+                    this.Logger.WriteInfo($"CSV sent for {config.Folder} to {sftpSettings.FullPath}");
+                else
+                    this.Logger.WriteError($"Failed to send CSV for {config.Folder}");
             }
+
+            this.Logger.WriteInfo("Macro export complete");
         }
 
-        private List<OrderDetails> GetOrderDetails(string subSources, int lastDays, bool ignoreUnknownSKUs)
+        private List<OrderDetails> GetFilteredOpenOrders(string subSource, string folderName, int tagValue, string sortField, string sortDirection)
         {
-            List<OrderDetails> orders = new List<OrderDetails>();
-
-            // Filter for paid, tagged, and date
-            FieldsFilter filter = new FieldsFilter()
+            var filter = new FieldsFilter
             {
-                NumericFields = new List<NumericFieldFilter>()
+                NumericFields = new List<NumericFieldFilter>
                 {
-                    new NumericFieldFilter() { FieldCode = FieldCode.GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 0 }
+                    new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 1 },
+                    new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_PARKED, Type = NumericFieldFilterType.Equal, Value = 0 },
+                    new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_LOCKED, Type = NumericFieldFilterType.Equal, Value = 0 }
                 },
-                TextFields = new List<TextFieldFilter>(),
-                DateFields = new List<DateFieldFilter>()
+                ListFields = new List<ListFieldFilter>
                 {
-                    new DateFieldFilter()
-                    {
-                        FieldCode = FieldCode.GENERAL_INFO_DATE,
-                        Type = DateTimeFieldFilterType.OlderThan,
-                        Value = lastDays
-                    }
+                    new ListFieldFilter { FieldCode = FieldCode.FOLDER, Value = folderName, Type = ListFieldFilterType.Is },
+                    new ListFieldFilter { FieldCode = FieldCode.GENERAL_INFO_TAG, Value = tagValue.ToString(), Type = ListFieldFilterType.Is }
+                },
+                TextFields = new List<TextFieldFilter>
+                {
+                    new TextFieldFilter { FieldCode = FieldCode.GENERAL_INFO_SUBSOURCE, Text = subSource, Type = TextFieldFilterType.Equal }
                 }
             };
 
-            foreach (string subsource in subSources.Split(',').Select(subsource => subsource.Trim()))
+            FieldCode sortingCode = sortField.ToUpper() switch
             {
-                if (!string.IsNullOrWhiteSpace(subsource))
+                "ORDERID" => FieldCode.GENERAL_INFO_ORDER_ID,
+                "REFERENCE" => FieldCode.GENERAL_INFO_REFERENCE_NUMBER,
+                _ => FieldCode.GENERAL_INFO_ORDER_ID
+            };
+
+            ListSortDirection sortingDirection = sortDirection.ToUpper() == "ASCENDING"
+                ? ListSortDirection.Ascending
+                : ListSortDirection.Descending;
+
+            var guids = Api.Orders.GetAllOpenOrders(filter, new List<FieldSorting>
+            {
+                new FieldSorting { FieldCode = sortingCode, Direction = sortingDirection, Order = 0 }
+            }, Guid.Empty, "");
+
+            var orders = guids.Count > 0
+                ? Api.Orders.GetOrdersById(guids)
+                : new List<OrderDetails>();
+
+            // Sort orders
+            orders = sortingCode == FieldCode.GENERAL_INFO_ORDER_ID
+                ? (sortingDirection == ListSortDirection.Ascending
+                    ? orders.OrderBy(o => o.NumOrderId).ToList()
+                    : orders.OrderByDescending(o => o.NumOrderId).ToList())
+                : (sortingDirection == ListSortDirection.Ascending
+                    ? orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
+                    : orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
+
+            return orders;
+        }
+
+        private List<OrderDetails> GetFilteredProcessedOrders(
+            string subSource,
+            string source,
+            string sortField,
+            string sortDirection,
+            int lookBackDays,
+            bool isShipped
+        )
+        {
+            var orders = new List<OrderDetails>();
+            DateTime toDate = DateTime.Today;
+            DateTime fromDate = toDate.AddDays(-lookBackDays);
+
+            var searchFilters = new List<SearchFilters>
+            {
+                new SearchFilters { SearchField = SearchFieldTypes.SubSource, SearchTerm = subSource },
+                new SearchFilters { SearchField = SearchFieldTypes.Source, SearchTerm = source }
+            };
+
+            var request = new SearchProcessedOrdersRequest
+            {
+                SearchFilters = searchFilters,
+                DateField = isShipped ? DateField.processed : DateField.cancelled,
+                FromDate = fromDate,
+                ToDate = toDate,
+                PageNumber = 1,
+                ResultsPerPage = 200
+            };
+
+            var response = Api.ProcessedOrders.SearchProcessedOrders(request);
+
+            foreach (var processedOrder in response.ProcessedOrders.Data)
+            {
+                var orderDetails = Api.Orders.GetOrderById(processedOrder.pkOrderID);
+                if (orderDetails != null && !orderDetails.FolderName.Contains("Completed"))
                 {
-                    filter.TextFields.Add(new TextFieldFilter()
-                    {
-                        FieldCode = FieldCode.GENERAL_INFO_SUBSOURCE,
-                        Text = subsource,
-                        Type = TextFieldFilterType.Equal
-                    });
+                    orders.Add(orderDetails);
                 }
             }
 
-            // Sorting setup
-            FieldCode sortingCode = FieldCode.GENERAL_INFO_REFERENCE_NUMBER;
-            ListSortDirection sortingDirection = ListSortDirection.Ascending;
-
-            Logger.WriteInfo("Querying order GUIDs from Linnworks...");
-            List<Guid> guids = Api.Orders.GetAllOpenOrders(filter, new List<FieldSorting>()
+            // Sorting
+            if (sortField.ToUpper() == "ORDERID")
             {
-                new FieldSorting()
-                {
-                    FieldCode = sortingCode,
-                    Direction = sortingDirection,
-                    Order = 0
-                }
-            }, new Guid("132db06e-f55d-40d1-9705-67fa0068dc3c"), "");
-
-            Logger.WriteInfo($"Order GUIDs returned: {guids.Count}");
-
-            if (guids.Count > 200)
-            {
-                for (int i = 0; i < guids.Count; i += 200)
-                {
-                    var batch = guids.Skip(i).Take(200).ToList();
-                    Logger.WriteInfo($"Fetching order details for batch {i / 200 + 1}: {batch.Count} orders");
-                    orders.AddRange(Api.Orders.GetOrdersById(batch));
-                }
-            }
-            else if (guids.Count <= 200 && guids.Count > 0)
-            {
-                Logger.WriteInfo("Fetching order details for all orders in a single batch.");
-                orders = Api.Orders.GetOrdersById(guids);
+                orders = sortDirection.ToUpper() == "ASCENDING"
+                    ? orders.OrderBy(o => o.NumOrderId).ToList()
+                    : orders.OrderByDescending(o => o.NumOrderId).ToList();
             }
             else
             {
-                Logger.WriteInfo("No orders found matching the filter.");
+                orders = sortDirection.ToUpper() == "ASCENDING"
+                    ? orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
+                    : orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList();
             }
 
-            // If enabled, filter the order items which are not present in Linnworks
-            if (ignoreUnknownSKUs)
-            {
-                Logger.WriteInfo("Filtering out orders with unlinked items (unknown SKUs)...");
-                foreach (OrderDetails order in orders)
-                {
-                    order.Items = order.Items.Where(item => item.ItemId != Guid.Empty && !string.IsNullOrEmpty(item.SKU)).ToList();
-                }
-                // Skip orders which do not have any valid item
-                orders = orders.Where(order => order.Items.Count > 0).ToList();
-                Logger.WriteInfo($"Orders remaining after filtering unknown SKUs: {orders.Count}");
-            }
+            return orders;
+        }
 
-            // Final sort
-            List<OrderDetails> sortedOrders;
-            if (sortingCode == FieldCode.GENERAL_INFO_ORDER_ID)
-            {
-                if (sortingDirection == ListSortDirection.Ascending)
-                    sortedOrders = orders.OrderBy(order => order.NumOrderId).ToList();
-                else
-                    sortedOrders = orders.OrderByDescending(order => order.NumOrderId).ToList();
-            }
-            else
-            {
-                if (sortingDirection == ListSortDirection.Ascending)
-                    sortedOrders = orders.OrderBy(order => order.GeneralInfo.ReferenceNum).ToList();
-                else
-                    sortedOrders = orders.OrderByDescending(order => order.GeneralInfo.ReferenceNum).ToList();
-            }
+        private StringBuilder GenerateCsv(List<OrderDetails> orders)
+        {
+            var csv = new StringBuilder();
+            csv.AppendLine("OrderNumber,CustomerName,Address,Items");
 
-            Logger.WriteInfo($"Sorted orders count: {sortedOrders.Count}");
-            return sortedOrders;
+            foreach (var order in orders)
+            {
+                var address = $"{order.CustomerInfo.Address.FullName}, {order.CustomerInfo.Address.Address1}, {order.CustomerInfo.Address.Address2}, {order.CustomerInfo.Address.Town}, {order.CustomerInfo.Address.PostCode}";
+                var items = string.Join(";", order.Items.Select(i => $"{i.SKU} x{i.Quantity}"));
+                csv.AppendLine($"{order.NumOrderId},{order.CustomerInfo.Address.FullName},\"{address}\",\"{items}\"");
+            }
+            return csv;
+        }
+
+        private bool SendByFTP(StringBuilder report, SFtpSettings sftpSettings)
+        {
+            try
+            {
+                using var upload = this.ProxyFactory.GetSFtpUploadProxy(sftpSettings);
+                upload.Write(report.ToString());
+                var uploadResult = upload.CompleteUpload();
+                if (!uploadResult.IsSuccess)
+                    throw new ArgumentException(uploadResult.ErrorMessage);
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"Error while sending the file to SFTP: {ex.Message}");
+                return false;
+            }
+            return true;
         }
     }
 }
