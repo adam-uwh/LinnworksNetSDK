@@ -5,7 +5,7 @@ using System.Text;
 using LinnworksAPI;
 using LinnworksMacroHelpers.Classes;
 using System.ComponentModel;
-using LinnworksMacroHelpers.Interfaces;
+using System.IO;
 
 namespace LinnworksMacro
 {
@@ -36,7 +36,8 @@ namespace LinnworksMacro
             string filetype,
             string sortField,
             string sortDirection,
-            int lookBackDays
+            int lookBackDays,
+            string localFilePath
         )
         {
             this.Logger.WriteInfo("Starting macro channel updater");
@@ -73,24 +74,50 @@ namespace LinnworksMacro
                     continue;
                 }
 
-                var csv = GenerateCsv(orders);
+                (StringBuilder Csv, string FileName) result;
+
+                switch (config.Notify)
+                {
+                    case var n when n == notifyAcknowledge:
+                        result = FormatnotifyAcknowledge(orders, config.Folder, localFilePath, filetype);
+                        break;
+                    case var n when n == notifyOOS:
+                        result = FormatnotifyOOS(orders, config.Folder, localFilePath, filetype);
+                        break;
+                    case var n when n == notifyBIS:
+                        result = FormatnotifyBIS(orders, config.Folder, localFilePath, filetype);
+                        break;
+                    case var n when n == notifyShipped:
+                        result = FormatnotifyShipped(orders, config.Folder, localFilePath, filetype);
+                        break;
+                    case var n when n == notifyCancelled:
+                        result = FormatnotifyCancelled(orders, config.Folder, localFilePath, filetype);
+                        break;
+                    default:
+                        var csv = GenerateCsv(orders);
+                        var fileName = $"Orders_FAILED_{config.Folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                        SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+                        result = (csv, fileName);
+                        this.Logger.WriteInfo($"Failed to call correct formatting function for Notify value: {config.Notify}");
+                        break;
+                }
+
+                // Configure SFTP settings for file upload
                 var sftpSettings = new SFtpSettings
                 {
                     UserName = SFTPUsername,
                     Password = SFTPPassword,
-                    Server = SFTPServer.StartsWith("sftp://") ? SFTPServer : $"sftp://{SFTPServer}",
+                    Server = SFTPServer.StartsWith("sftp://") ? SFTPServer.Substring(7) : SFTPServer,
                     Port = SFTPPort,
-                    FullPath = $"{SFTPFolderRoot}/{config.Directory}/"
+                    FullPath = $"{SFTPFolderRoot}/{config.Directory}/{result.FileName}"
                 };
 
-                var fileName = $"Orders_{config.Folder}_{DateTime.Now:yyyyMMddHHmmss}.{filetype}";
-                sftpSettings.FullPath += fileName;
-
-                if (SendByFTP(csv, sftpSettings))
+                // Upload the CSV to the SFTP server
+                if (SendByFTP(result.Csv, sftpSettings))
                     this.Logger.WriteInfo($"CSV sent for {config.Folder} to {sftpSettings.FullPath}");
                 else
-                    this.Logger.WriteError($"Failed to send CSV for {config.Folder}");
-            }
+                    this.Logger.WriteError($"Failed to send CSV for {config.Folder} with fullPath {sftpSettings.FullPath}");
+            }  
 
             this.Logger.WriteInfo("Macro export complete");
         }
@@ -223,30 +250,12 @@ namespace LinnworksMacro
         {
             try
             {
-
                 this.Logger.WriteInfo($"SFTP Settings: Server={sftpSettings.Server}, Port={sftpSettings.Port}, User={sftpSettings.UserName}, Path={sftpSettings.FullPath}");
 
-                if (this.ProxyFactory == null)
-                {
-                    this.Logger.WriteError("ProxyFactory is null.");
-                    return false;
-                }
-                if (sftpSettings == null)
-                {
-                    this.Logger.WriteError("SFtpSettings is null.");
-                    return false;
-                }
-                using var upload = this.ProxyFactory.GetSFtpUploadProxy(sftpSettings);
-                if (upload == null)
-                {
-                    this.Logger.WriteError("SFTP upload proxy is null.");
-                    return false;
-                }
-                if (report == null)
-                {
-                    this.Logger.WriteError("CSV report is null.");
-                    return false;
-                }
+                using var upload = this.ProxyFactory?.GetSFtpUploadProxy(sftpSettings);
+                if (upload == null || report == null || sftpSettings == null)
+                    throw new Exception("One or more required objects for SFTP upload are null.");
+
                 upload.Write(report.ToString());
                 var uploadResult = upload.CompleteUpload();
                 if (!uploadResult.IsSuccess)
@@ -258,6 +267,51 @@ namespace LinnworksMacro
                 return false;
             }
             return true;
+        }
+
+        private void SaveCsvLocally(StringBuilder csv, string localPath)
+        {
+            File.WriteAllText(localPath, csv.ToString());
+        }
+
+        private (StringBuilder Csv, string FileName) FormatnotifyAcknowledge(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            string fileName = $"Orders_TEST_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+            var csv = GenerateCsv(orders);
+            SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+            return (csv, fileName);
+        }
+
+        private (StringBuilder Csv, string FileName) FormatnotifyOOS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+            var csv = GenerateCsv(orders);
+            SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+            return (csv, fileName);
+        }
+
+        private (StringBuilder Csv, string FileName) FormatnotifyBIS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+            var csv = GenerateCsv(orders);
+            SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+            return (csv, fileName);
+        }
+
+        private (StringBuilder Csv, string FileName) FormatnotifyShipped(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+            var csv = GenerateCsv(orders);
+            SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+            return (csv, fileName);
+        }
+
+        private (StringBuilder Csv, string FileName) FormatnotifyCancelled(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+            var csv = GenerateCsv(orders);
+            SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+            return (csv, fileName);
         }
     }
 }

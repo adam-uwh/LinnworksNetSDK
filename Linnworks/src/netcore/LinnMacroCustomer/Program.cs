@@ -27,7 +27,7 @@ namespace LinnMacroCustomer
             string newFolder = "New";
             string oosFolder = "Out of Stock";
             string bisFolder = "Back in Stock";
-            string SFTPServer = "sftp.jrslsecure.com/";
+            string SFTPServer = "sftp.jrslsecure.com";
             int SFTPPort = 22;
             string SFTPUsername = "Ecommerce";
             string SFTPPassword = "1f3942Ns";
@@ -41,8 +41,9 @@ namespace LinnMacroCustomer
             string sortField = "GENERAL_INFO_ORDER_ID";
             string sortDirection = "ASC";
             int lookBackDays = 5;
+            string localFilePath = "C:\\Users\\adamw\\OneDrive - johnhogggroup\\Documents\\Projects\\LinnworksMacro";
 
-            macro.Execute(Source, subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays);
+            macro.Execute(Source, subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays, localFilePath);
 
             /*string sources ="DIRECT";
             string subSources = "MultiVery";
