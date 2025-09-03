@@ -16,6 +16,7 @@ namespace LinnMacroCustomer
             // Example values - replace with your actual values or get them from user input/config
             //string locationId = "00000000-0000-0000-0000-000000000000"; // Example location ID
             //bool ignoreUnknownSKUs = true;
+            string Source = "DIRECT";
             string subSource = "MultiVery";
             string notifyAcknowledge = "TRUE";
             string notifyOOS = "FALSE";
@@ -28,21 +29,39 @@ namespace LinnMacroCustomer
             string bisFolder = "Back in Stock";
             string SFTPServer = "sftp.jrslsecure.com/";
             int SFTPPort = 22;
-            string SFTPUsername = "";
-            string SFTPPassword = "";
-            string SFTPFolderRoot = "DSV Operations/Customers/";
-            string acknowledgeDirectory = "Notify-Acknowledged/";
-            string oosDirectory = "Notify-OOS/";
-            string bisDirectory = "Notify-BIS/";
-            string shippedDirectory = "Notify-Shipped/";
-            string cancelDirectory = "Notify-Cancelled/";
+            string SFTPUsername = "Ecommerce";
+            string SFTPPassword = "1f3942Ns";
+            string SFTPFolderRoot = "DSV Operations/Customers/1611-Very";
+            string acknowledgeDirectory = "Notify-Acknowledged";
+            string oosDirectory = "Notify-OOS";
+            string bisDirectory = "Notify-BIS";
+            string shippedDirectory = "Notify-Shipped";
+            string cancelDirectory = "Notify-Cancelled";
             string filetype = "Direct"; //Direct or API
             string sortField = "GENERAL_INFO_ORDER_ID";
             string sortDirection = "ASC";
             int lookBackDays = 5;
-            string Source = "DATAIMPORTEXPORT";
 
-            macro.Execute(subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays, Source);
+            macro.Execute(Source, subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays);
+
+            /*string sources ="DIRECT";
+            string subSources = "MultiVery";
+            string accountNumber = "9999";
+            string SFTPServer = "sftp.jrslsecure.com/";
+            int SFTPPort = 22;
+            string SFTPUsername = "Ecommerce";
+            string SFTPPassword = "1f3942Ns";
+            string SFTPFolderPath = "DSV Operations/Customers/1611-Very/Notify-Acknowledged";
+            string sortField = "";
+            string sortDirection = "";
+            int lastDays = 2;
+            bool ignoreUnknownSKUs = true;
+            string extendedPropertyName = "";
+            bool addShippingCharge = false;
+            string shippingChargeSku = "";*/
+
+           // macro.Execute(sources, subSources, accountNumber, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderPath, sortField, sortDirection, lastDays, ignoreUnknownSKUs, extendedPropertyName, addShippingCharge, shippingChargeSku);
+
 
             //macro.Execute(
             //orderIds,
