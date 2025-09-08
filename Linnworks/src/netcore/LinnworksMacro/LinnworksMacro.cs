@@ -279,6 +279,18 @@ namespace LinnworksMacro
             string fileName = $"Orders_TEST_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
             var csv = GenerateCsv(orders);
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+
+            this.Logger.WriteInfo($"CSV file saved locally: {localFilePath}");
+            this.Logger.WriteInfo($"Sending to email macro: {string.Join(",", new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") })}");
+
+            SendMacroEmail(
+                new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") },
+                "Test Subject from Macro",
+                "This is the email body sent from a Linnworks macro."
+            );
+
+            this.Logger.WriteInfo($"Email macro sent successfully.");
+
             return (csv, fileName);
         }
 
@@ -312,6 +324,31 @@ namespace LinnworksMacro
             var csv = GenerateCsv(orders);
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
             return (csv, fileName);
+        }
+
+        private void SendMacroEmail(List<Guid> recipientIds, string subject, string body, string templateType = null)
+        {
+            this.Logger.WriteInfo($"Preparing to send email. Recipients: {string.Join(",", recipientIds)}, Subject: {subject}, TemplateType: {templateType}");
+
+            var emailRequest = new GenerateFreeTextEmailRequest
+            {
+                ids = recipientIds,
+                subject = subject,
+                body = body,
+                templateType = templateType
+            };
+
+            this.Logger.WriteInfo("Sending email via Api.Email.GenerateFreeTextEmail...");
+            var emailResponse = Api.Email.GenerateFreeTextEmail(emailRequest);
+
+            if (emailResponse.isComplete)
+            {
+                this.Logger.WriteInfo("Email sent successfully!");
+            }
+            else
+            {
+                this.Logger.WriteError($"Email failed to send. Failed recipients: {string.Join(",", emailResponse.FailedRecipients)}");
+            }
         }
     }
 }
