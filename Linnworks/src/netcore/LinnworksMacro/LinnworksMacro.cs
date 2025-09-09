@@ -74,7 +74,7 @@ namespace LinnworksMacro
                     continue;
                 }
 
-                (StringBuilder Csv, string FileName) result;
+                (StringBuilder Csv, string FileName, Guid[] OrderIds) result;
 
                 switch (config.Notify)
                 {
@@ -97,8 +97,8 @@ namespace LinnworksMacro
                         var csv = GenerateCsv(orders);
                         var fileName = $"Orders_FAILED_{config.Folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
                         SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
-                        result = (csv, fileName);
-                        this.Logger.WriteInfo($"Failed to call correct formatting function for Notify value: {config.Notify}");
+                        result = (csv, fileName, new Guid[0]);
+                        Logger.WriteInfo($"Failed to call correct formatting function for Notify value: {config.Notify}");
                         break;
                 }
 
@@ -114,9 +114,31 @@ namespace LinnworksMacro
 
                 // Upload the CSV to the SFTP server
                 if (SendByFTP(result.Csv, sftpSettings))
+                {
                     this.Logger.WriteInfo($"CSV sent for {config.Folder} to {sftpSettings.FullPath}");
+
+                    // Iterate through OrderIds and apply logic based on notification type
+                    if (result.OrderIds != null && result.OrderIds.Length > 0)
+                    {
+                        var orderIdList = result.OrderIds.ToList();
+
+                        if (config.Notify == notifyAcknowledge || config.Notify == notifyBIS)
+                        {
+                            // Move to 'Updated' folder and set tag = null
+                            Api.Orders.AssignToFolder(orderIdList, "Updated");
+                            Api.Orders.ChangeOrderTag(orderIdList, null);
+                        }
+                        else if (config.Notify == notifyOOS || config.Notify == notifyShipped || config.Notify == notifyCancelled)
+                        {
+                            // Do not move folder, just set tag = null
+                            Api.Orders.ChangeOrderTag(orderIdList, null);
+                        }
+                    }
+                }
                 else
+                {
                     this.Logger.WriteError($"Failed to send CSV for {config.Folder} with fullPath {sftpSettings.FullPath}");
+                }
             }  
 
             this.Logger.WriteInfo("Macro export complete");
@@ -274,15 +296,47 @@ namespace LinnworksMacro
             File.WriteAllText(localPath, csv.ToString());
         }
 
-        private (StringBuilder Csv, string FileName) FormatnotifyAcknowledge(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyAcknowledge(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
         {
+            // Set the file name and type
             string fileName = $"Orders_TEST_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
-            var csv = GenerateCsv(orders);
+
+            // Create the CSV content
+            var csv = new StringBuilder();
+
+            // Set the CSV header
+            csv.AppendLine("Linnworks Order Number,Reference Num,Secondary Ref,External Ref,Primary PO Field,JDE Order Number,Sold To Account,Received Date,Source,Sub Source,Despatch By Date,Number Order Items,Postal Service Name,Total Order Weight,Tracking Number,Item > SKU,Item > ChannelSKU,Item > Description,Item > Quantity,Item > Line Ref,Item > Item Cost (ex VAT),Item > Item Discount (ex VAT),Item > Tax Rate,Item > Weight Per Item");
+
+            // Helper to get ExtendedProperty value by name
+            string GetExtendedProperty(List<ExtendedProperty> props, string name)
+            {
+                if (props == null) return "";
+                var prop = props.FirstOrDefault(ep => ep.Name == name);
+                return prop != null ? prop.Value : "";
+            }
+
+            // Create an array to record all order GUIDs
+            Guid[] orderIds = orders.Select(order => order.OrderId).ToArray();
+
+            foreach (var order in orders)
+            {
+                string primaryPO = GetExtendedProperty(order.ExtendedProperties, "PrimaryPONumber");
+                string jdeOrderNo = GetExtendedProperty(order.ExtendedProperties, "JDEOrderNo");
+                string soldTo = GetExtendedProperty(order.ExtendedProperties, "SoldTo");
+
+                foreach (var item in order.Items)
+                {
+                    csv.AppendLine($"{order.NumOrderId},{order.GeneralInfo.ReferenceNum},{order.GeneralInfo.SecondaryReference},{order.GeneralInfo.ExternalReferenceNum},{primaryPO},{jdeOrderNo},{soldTo},{order.GeneralInfo.ReceivedDate:yyyy-MM-dd},{order.GeneralInfo.Source},{order.GeneralInfo.SubSource},{order.GeneralInfo.DespatchByDate:yyyy-MM-dd},{order.GeneralInfo.NumItems},{order.ShippingInfo.PostalServiceName},{order.ShippingInfo.TotalWeight},{order.ShippingInfo.TrackingNumber},{item.SKU},{item.ChannelSKU},{item.Title},{item.Quantity},{item.ItemNumber},{item.PricePerUnit},{item.DiscountValue},{item.TaxRate},{item.Weight}");
+                }
+            }
+
+            // Save the CSV locally
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
 
             this.Logger.WriteInfo($"CSV file saved locally: {localFilePath}");
             this.Logger.WriteInfo($"Sending to email macro: {string.Join(",", new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") })}");
 
+            // Send the email
             SendMacroEmail(
                 new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") },
                 "Test Subject from Macro",
@@ -291,39 +345,44 @@ namespace LinnworksMacro
 
             this.Logger.WriteInfo($"Email macro sent successfully.");
 
-            return (csv, fileName);
+            // Return the CSV, filename, and orderIds array
+            return (csv, fileName, orderIds);
         }
 
-        private (StringBuilder Csv, string FileName) FormatnotifyOOS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyOOS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
         {
             string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
             var csv = GenerateCsv(orders);
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
-            return (csv, fileName);
+            Guid[] orderIds = new Guid[0]; // Blank for now
+            return (csv, fileName, orderIds);
         }
 
-        private (StringBuilder Csv, string FileName) FormatnotifyBIS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyBIS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
         {
             string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
             var csv = GenerateCsv(orders);
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
-            return (csv, fileName);
+            Guid[] orderIds = new Guid[0]; // Blank for now
+            return (csv, fileName, orderIds);
         }
 
-        private (StringBuilder Csv, string FileName) FormatnotifyShipped(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyShipped(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
         {
             string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
             var csv = GenerateCsv(orders);
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
-            return (csv, fileName);
+            Guid[] orderIds = new Guid[0]; // Blank for now
+            return (csv, fileName, orderIds);
         }
 
-        private (StringBuilder Csv, string FileName) FormatnotifyCancelled(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyCancelled(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
         {
             string fileName = $"Orders_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
             var csv = GenerateCsv(orders);
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
-            return (csv, fileName);
+            Guid[] orderIds = new Guid[0]; // Blank for now
+            return (csv, fileName, orderIds);
         }
 
         private void SendMacroEmail(List<Guid> recipientIds, string subject, string body, string templateType = null)
