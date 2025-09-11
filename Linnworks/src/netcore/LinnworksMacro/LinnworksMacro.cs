@@ -113,6 +113,9 @@ namespace LinnworksMacro
                 };
 
                 // Upload the CSV to the SFTP server
+                string emailSubject;
+                string emailBody;
+
                 if (SendByFTP(result.Csv, sftpSettings))
                 {
                     this.Logger.WriteInfo($"CSV sent for {config.Folder} to {sftpSettings.FullPath}");
@@ -134,11 +137,26 @@ namespace LinnworksMacro
                             Api.Orders.ChangeOrderTag(orderIdList, null);
                         }
                     }
+
+                    emailSubject = $"SFTP Upload Successful for {config.Folder}";
+                    emailBody = $"The CSV file '{result.FileName}' was successfully uploaded to SFTP at '{sftpSettings.FullPath}'.";
                 }
                 else
                 {
                     this.Logger.WriteError($"Failed to send CSV for {config.Folder} with fullPath {sftpSettings.FullPath}");
+
+                    emailSubject = $"SFTP Upload Failed for {config.Folder}";
+                    emailBody = $"The CSV file '{result.FileName}' could not be uploaded to SFTP at '{sftpSettings.FullPath}'. Please check the logs for details.";
                 }
+
+                // Send the email
+                SendMacroEmail(
+                    new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") },
+                    emailSubject,
+                    emailBody
+                );
+
+                this.Logger.WriteInfo($"Email macro sent successfully.");
             }  
 
             this.Logger.WriteInfo("Macro export complete");
@@ -334,16 +352,6 @@ namespace LinnworksMacro
             SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
 
             this.Logger.WriteInfo($"CSV file saved locally: {localFilePath}");
-            this.Logger.WriteInfo($"Sending to email macro: {string.Join(",", new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") })}");
-
-            // Send the email
-            SendMacroEmail(
-                new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") },
-                "Test Subject from Macro",
-                "This is the email body sent from a Linnworks macro."
-            );
-
-            this.Logger.WriteInfo($"Email macro sent successfully.");
 
             // Return the CSV, filename, and orderIds array
             return (csv, fileName, orderIds);
