@@ -16,7 +16,7 @@ namespace LinnMacroCustomer
             // Example values - replace with your actual values or get them from user input/config
             //string locationId = "00000000-0000-0000-0000-000000000000"; // Example location ID
             //bool ignoreUnknownSKUs = true;
-            string Source = "DIRECT";
+            /*string Source = "DIRECT";
             string subSource = "MultiVery";
             string notifyAcknowledge = "TRUE";
             string notifyOOS = "FALSE";
@@ -41,9 +41,9 @@ namespace LinnMacroCustomer
             string sortField = "GENERAL_INFO_ORDER_ID";
             string sortDirection = "ASC";
             int lookBackDays = 5;
-            string localFilePath = "C:\\Users\\adamw\\OneDrive - johnhogggroup\\Documents\\Projects\\LinnworksMacro";
+            string localFilePath = "C:\\Users\\adamw\\OneDrive - johnhogggroup\\Documents\\Projects\\LinnworksMacro";*/
 
-            macro.Execute(Source, subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays, localFilePath);
+            // macro.Execute(Source, subSource, notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, notifyCancelled, tagValue, newFolder, oosFolder, bisFolder, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderRoot, acknowledgeDirectory, oosDirectory, bisDirectory, shippedDirectory, cancelDirectory, filetype, sortField, sortDirection, lookBackDays, localFilePath);
 
             /*string sources ="DIRECT";
             string subSources = "MultiVery";
@@ -61,7 +61,7 @@ namespace LinnMacroCustomer
             bool addShippingCharge = false;
             string shippingChargeSku = "";*/
 
-           // macro.Execute(sources, subSources, accountNumber, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderPath, sortField, sortDirection, lastDays, ignoreUnknownSKUs, extendedPropertyName, addShippingCharge, shippingChargeSku);
+            // macro.Execute(sources, subSources, accountNumber, SFTPServer, SFTPPort, SFTPUsername, SFTPPassword, SFTPFolderPath, sortField, sortDirection, lastDays, ignoreUnknownSKUs, extendedPropertyName, addShippingCharge, shippingChargeSku);
 
 
             //macro.Execute(
@@ -78,7 +78,36 @@ namespace LinnMacroCustomer
 
             //macro.Execute(orderIds);
 
-            Console.WriteLine("Order checked");
+            // Folder Move and Tag Assign by Schedule
+            //string folderName = "Out of Stock";
+            //string moveToFolder = "Back in Stock";
+            //string updateFolder = "Updated";
+            //string locationId = "132db06e-f55d-40d1-9705-67fa0068dc3c"; 
+            //int tagNumber = 6;
+            //int lastDays = 14;
+            //bool ignoreUnknownSKUs = true;
+
+            // Execute macro 
+            /*macro.Execute(
+                folderName,      
+                moveToFolder,    
+                updateFolder,
+                locationId,
+                tagNumber,       
+                lastDays,
+                ignoreUnknownSKUs      
+            );*/
+
+            // Set required variables
+            string subSource = "Dunelm 21"; // Set to desired subSource or leave blank
+            int tag = 4; // Set to desired tag value
+            string emailAddresses = "adamw@uwhome.com,ecomm@uwhome.com"; // Comma-separated emails
+            int lastDays = 7; // Set to desired number of days
+
+            // Pass variables to macro.Execute
+            macro.Execute(subSource, tag, emailAddresses, lastDays);
+
+            Console.WriteLine("Processed order check complete.");
             Console.Read();
         }
 
