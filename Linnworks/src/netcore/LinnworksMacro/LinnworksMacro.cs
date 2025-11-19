@@ -29,14 +29,20 @@ namespace LinnworksMacro
          * Description ~ Include ex-vat unit cost and add shipping line + extra column to header lines
          * ***************************************
          * LATEST AMENDMENT
-         * Added per-order processing based on extended property 'soldto'.
-         * Added many new header/detail columns, folder handling, notes and dispatch date modifier logic.
-         * Added option to save files locally using 'localFilePath' when provided (avoids SFTP for testing).
+         * - Per-order processing based on extended property 'soldto'.
+         * - Many new header/detail columns, folder handling, notes and dispatch date modifier logic.
+         * - Option to save files locally using 'localFilePath' (avoids SFTP for testing).
+         * - OD line format includes Customer_Order_Reference as the 2nd column.
+         * - Ship_To_Account_Number comes from macro parameter 'shipTo'.
+         * - Delivery_Country_Code resolved from Api.Orders.GetCountries() (single call cached per run).
          * ****************************************/
 
         private readonly StringBuilder _csvFile = new();
         private readonly Dictionary<Guid, OrderHead> _dictHead = new();
         private readonly Dictionary<Guid, List<OrderDetail>> _dictDetails = new();
+
+        // Cached countries map: key = CountryId.ToString() -> value = CountryCode (2-letter)
+        private Dictionary<string, string> _countriesMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public void Execute(
             string source,
@@ -47,7 +53,7 @@ namespace LinnworksMacro
             string SFTPUsername,
             string SFTPPassword,
             string SFTPFolderPath,
-            string localFilePath,             // NEW - if not empty, write files locally instead of SFTP
+            string localFilePath,             // if not empty, write files locally instead of SFTP
             string sortField,
             string sortDirection,
             int lastDays,
@@ -69,7 +75,7 @@ namespace LinnworksMacro
             bool ignoreUnknownSKUs
             )
         {
-            this.Logger.WriteInfo("Starting updated script - per-order export to SFTP or local path");
+            this.Logger.WriteInfo("Starting script - per-order export to SFTP or local path (using Api.Orders.GetCountries for country codes)");
 
             SFtpSettings sftpSettings = new SFtpSettings()
             {
@@ -79,6 +85,18 @@ namespace LinnworksMacro
                 Port = SFTPPort,
                 FullPath = SFTPFolderPath
             };
+
+            // Load countries mapping once (CountryId -> CountryCode) using Api.Orders.GetCountries()
+            try
+            {
+                _countriesMap = LoadCountriesMap();
+                this.Logger.WriteInfo($"Loaded {_countriesMap.Count} countries for code mapping.");
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"Failed to load countries map: {ex.Message}. Country codes may be empty.");
+                _countriesMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            }
 
             // Get all matching orders for the source/subsource and folderUpdated
             List<OrderDetails> orders = GetOrderDetails(source, subSource, sortField, sortDirection, lastDays, ignoreUnknownSKUs, extendedPropertyName, folderUpdated);
@@ -138,7 +156,8 @@ namespace LinnworksMacro
                     _dictHead.Clear();
                     _dictDetails.Clear();
 
-                    BuildOrderMapping(ods, items, addShippingCharge, shippingChargeSku, addDispatchDays, dispatchModifier, priceFlag, orderType, branchPlan, shipCode, holdStatus, soldTo);
+                    // PASS shipTo into BuildOrderMapping (Ship_To_Account_Number will be set to macro param)
+                    BuildOrderMapping(ods, items, addShippingCharge, shippingChargeSku, addDispatchDays, dispatchModifier, priceFlag, orderType, branchPlan, shipTo, shipCode, holdStatus, soldTo);
 
                     CompileCsv(); // fills _csvFile
 
@@ -200,7 +219,53 @@ namespace LinnworksMacro
             this.Logger.WriteInfo("Script finished.");
         }
 
-        private void BuildOrderMapping(OrderDetails ods, List<OrderItem> items, bool addShippingSku, string shippingSku, bool addDispatchDays, int dispatchModifier, string priceFlag, string orderType, string branchPlan, string shipCode, string holdStatus, string soldTo)
+        /// <summary>
+        /// Loads the countries once using Api.Orders.GetCountries() and returns a map: CountryId.ToString() -> CountryCode (upper).
+        /// </summary>
+        private Dictionary<string, string> LoadCountriesMap()
+        {
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            // Use the correct call as requested: Api.Orders.GetCountries()
+            var countries = Api.Orders.GetCountries();
+
+            if (countries == null)
+                return map;
+
+            foreach (var c in countries)
+            {
+                try
+                {
+                    // Expecting each country object to have CountryId and CountryCode properties
+                    var t = c.GetType();
+                    var idProp = t.GetProperty("CountryId") ?? t.GetProperty("Id") ?? t.GetProperty("countryid", System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                    var codeProp = t.GetProperty("CountryCode") ?? t.GetProperty("Code") ?? t.GetProperty("countrycode", System.Reflection.BindingFlags.IgnoreCase | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+
+                    if (idProp == null || codeProp == null)
+                        continue;
+
+                    var idVal = idProp.GetValue(c);
+                    var codeVal = codeProp.GetValue(c) as string;
+
+                    if (idVal == null || string.IsNullOrWhiteSpace(codeVal))
+                        continue;
+
+                    var key = idVal.ToString();
+                    var code = codeVal.Trim().ToUpperInvariant();
+
+                    if (!map.ContainsKey(key))
+                        map[key] = code;
+                }
+                catch
+                {
+                    // skip any problematic country entry
+                }
+            }
+
+            return map;
+        }
+
+        private void BuildOrderMapping(OrderDetails ods, List<OrderItem> items, bool addShippingSku, string shippingSku, bool addDispatchDays, int dispatchModifier, string priceFlag, string orderType, string branchPlan, string shipTo, string shipCode, string holdStatus, string soldTo)
         {
             // Header mapping
             string customerOrderReference = GetExtendedPropertyValue(ods, "custpo");
@@ -221,10 +286,12 @@ namespace LinnworksMacro
                 deliveryEmail = "noreply@uwhome.com";
 
             string deliveryTown = ods.CustomerInfo?.Address?.Town ?? string.Empty;
-            // 'CustomerAddress' in this SDK provides Region instead of County
+            // 'CustomerAddress' in this SDK may provide Region instead of County
             string deliveryCounty = ods.CustomerInfo?.Address?.Region ?? string.Empty;
-            // No explicit CountryCode on CustomerAddress; fall back to Country string
-            string deliveryCountryCode = ods.CustomerInfo?.Address?.Country ?? string.Empty;
+
+            // Resolve Delivery_Country_Code using the countries map (CountryId -> CountryCode). No manual fallback.
+            string deliveryCountryCode = ResolveCountryCodeFromOrder(ods);
+
             string deliveryCountry = ods.CustomerInfo?.Address?.Country ?? string.Empty;
 
             var oh = new OrderHead()
@@ -256,7 +323,8 @@ namespace LinnworksMacro
                 Delivery_County = deliveryCounty,
                 Delivery_Country_Code = deliveryCountryCode,
                 Delivery_Country = deliveryCountry,
-                Ship_To_Account_Number = soldTo,
+                // Use the 'shipTo' parameter passed into the macro (not the per-order extended property soldTo)
+                Ship_To_Account_Number = shipTo,
                 Hold_Status = holdStatus
             };
 
@@ -269,6 +337,7 @@ namespace LinnworksMacro
                 var detail = new OrderDetail()
                 {
                     Record_Type = "OD",
+                    Customer_Order_Reference = customerOrderReference, // include customer order reference on OD lines
                     Line_Number = lineNumber++,
                     JRSL_Product_Code = string.IsNullOrWhiteSpace(oi.SKU) ? oi.ChannelSKU : oi.SKU,
                     Blank1 = string.Empty,
@@ -290,6 +359,7 @@ namespace LinnworksMacro
                 var shipDetail = new OrderDetail()
                 {
                     Record_Type = "OD",
+                    Customer_Order_Reference = customerOrderReference,
                     Line_Number = _dictDetails.ContainsKey(ods.OrderId) ? _dictDetails[ods.OrderId].Count + 1 : lineNumber,
                     JRSL_Product_Code = shippingSku,
                     Blank1 = string.Empty,
@@ -303,6 +373,41 @@ namespace LinnworksMacro
                     _dictDetails.Add(ods.OrderId, new List<OrderDetail>() { shipDetail });
                 else
                     _dictDetails[ods.OrderId].Add(shipDetail);
+            }
+        }
+
+        /// <summary>
+        /// Resolve the country code for the order using CountryId from the order address and the cached countries map.
+        /// If not found, returns empty string. No manual fallback - relies on Api.Orders.GetCountries().
+        /// </summary>
+        private string ResolveCountryCodeFromOrder(OrderDetails ods)
+        {
+            try
+            {
+                if (_countriesMap != null && _countriesMap.Count > 0)
+                {
+                    var addr = ods?.CustomerInfo?.Address;
+                    if (addr != null)
+                    {
+                        // Attempt to pull CountryId from the order address via reflection (robust to SDK shape)
+                        var countryIdProp = addr.GetType().GetProperty("CountryId") ?? addr.GetType().GetProperty("CountryID") ?? addr.GetType().GetProperty("Country");
+                        var countryIdVal = countryIdProp?.GetValue(addr);
+
+                        if (countryIdVal != null)
+                        {
+                            var key = countryIdVal.ToString();
+                            if (!string.IsNullOrWhiteSpace(key) && _countriesMap.TryGetValue(key, out var code))
+                                return code;
+                        }
+                    }
+                }
+
+                // If there's no mapping found, return empty string (explicit - do not return full country name)
+                return string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
             }
         }
 
@@ -464,8 +569,10 @@ namespace LinnworksMacro
 
         private void AddOrderDetails(OrderDetail od)
         {
+            // Include Customer_Order_Reference as the second column on OD lines (immediately after 'OD')
             _csvFile.AppendLine(string.Join("|"
                 , od.Record_Type
+                , od.Customer_Order_Reference
                 , od.Line_Number
                 , od.JRSL_Product_Code
                 , od.Blank1
@@ -505,13 +612,14 @@ namespace LinnworksMacro
             public string Delivery_County { get; set; } = string.Empty;
             public string Delivery_Country_Code { get; set; } = string.Empty;
             public string Delivery_Country { get; set; } = string.Empty;
-            public string Ship_To_Account_Number { get; set; } = string.Empty; // soldto
+            public string Ship_To_Account_Number { get; set; } = string.Empty; // value taken from macro param 'shipTo'
             public string Hold_Status { get; set; } = string.Empty;
         }
 
         private sealed class OrderDetail
         {
             public string Record_Type { get; set; } = string.Empty;
+            public string Customer_Order_Reference { get; set; } = string.Empty; // OD second column
             public int Line_Number { get; set; }
             public string JRSL_Product_Code { get; set; } = string.Empty;
             public string Blank1 { get; set; } = string.Empty;
@@ -598,7 +706,8 @@ namespace LinnworksMacro
 
             string fullPath = Path.Combine(dir, fileName);
 
-            File.WriteAllText(fullPath, report.ToString(), Encoding.UTF8);
+            // Write UTF-8 without BOM to avoid JDE import issues
+            File.WriteAllText(fullPath, report.ToString(), new UTF8Encoding(false));
         }
 
         private bool SendByFTP(StringBuilder report, SFtpSettings sftpSettings)
@@ -645,10 +754,9 @@ namespace LinnworksMacro
             try
             {
                 // SDK method names vary. Common ones include AddNote or AddNoteToOrder.
-                // Try AddNote first, otherwise try AddNoteToOrder or SaveOrderNote (adjust to your SDK).
+                // Try to use GetOrderNotes/SetOrderNotes pattern if available in SDK
                 try
                 {
-                    // Get existing notes, append and set back since this SDK exposes GetOrderNotes/SetOrderNotes
                     var existing = Api.Orders.GetOrderNotes(orderId) ?? new System.Collections.Generic.List<OrderNote>();
                     existing.Add(new OrderNote
                     {
@@ -678,6 +786,13 @@ namespace LinnworksMacro
         private List<OrderDetails> GetOrderDetails(string sources, string subSources, string sortCode, string sortDirection, int lastDays, bool ignoreUnknownSKUs, string extendedPropertyName, string folderUpdated)
         {
             List<OrderDetails> orders = new List<OrderDetails>();
+
+            // Diagnostic logging: show incoming parameters
+            try
+            {
+                this.Logger.WriteInfo($"GetOrderDetails called with sources='{sources}', subSources='{subSources}', sortCode='{sortCode}', sortDirection='{sortDirection}', lastDays={lastDays}, ignoreUnknownSKUs={ignoreUnknownSKUs}, extendedPropertyName='{extendedPropertyName}', folderUpdated='{folderUpdated}'");
+            }
+            catch { }
 
             //filter for paid, unparked and unlocked orders 
             FieldsFilter filter = new FieldsFilter()
@@ -726,16 +841,44 @@ namespace LinnworksMacro
                 }
             }
 
-            // Filter by folder updated (new requirement)
+            // Filter by folder updated (new requirement) - use ListFieldFilter for folder
             if (!string.IsNullOrWhiteSpace(folderUpdated))
             {
-                filter.TextFields.Add(new TextFieldFilter()
+                if (filter.ListFields == null)
+                    filter.ListFields = new System.Collections.Generic.List<ListFieldFilter>();
+
+                filter.ListFields.Add(new ListFieldFilter()
                 {
                     FieldCode = FieldCode.FOLDER,
-                    Text = folderUpdated,
-                    Type = TextFieldFilterType.Equal
+                    Value = folderUpdated,
+                    Type = ListFieldFilterType.Is
                 });
             }
+
+            // Log constructed filters for debugging (TextFields and ListFields)
+            try
+            {
+                if (filter.TextFields != null && filter.TextFields.Count > 0)
+                {
+                    var parts = filter.TextFields.Select(tf => $"{tf.FieldCode}:{tf.Text}");
+                    this.Logger.WriteInfo("Constructed TextFields for GetOrderDetails: " + string.Join(", ", parts));
+                }
+                else
+                {
+                    this.Logger.WriteInfo("No TextFields constructed for GetOrderDetails.");
+                }
+
+                if (filter.ListFields != null && filter.ListFields.Count > 0)
+                {
+                    var parts2 = filter.ListFields.Select(lf => $"{lf.FieldCode}:{lf.Value}");
+                    this.Logger.WriteInfo("Constructed ListFields for GetOrderDetails: " + string.Join(", ", parts2));
+                }
+                else
+                {
+                    this.Logger.WriteInfo("No ListFields constructed for GetOrderDetails.");
+                }
+            }
+            catch { }
 
             FieldCode sortingCode = FieldCode.GENERAL_INFO_ORDER_ID;
             ListSortDirection sortingDirection = ListSortDirection.Descending;
@@ -754,6 +897,22 @@ namespace LinnworksMacro
                     Order = 0
                 }
             }, Guid.Empty, "");
+
+            // Log results of GetAllOpenOrders for debugging
+            try
+            {
+                int count = guids?.Count ?? 0;
+                if (count == 0)
+                {
+                    this.Logger.WriteInfo("GetAllOpenOrders returned 0 order IDs.");
+                }
+                else
+                {
+                    var sample = string.Join(", ", guids.Take(10));
+                    this.Logger.WriteInfo($"GetAllOpenOrders returned {count} order IDs (sample): {sample}");
+                }
+            }
+            catch { }
 
             if (guids.Count > 200)
             {

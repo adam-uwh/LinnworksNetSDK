@@ -15,8 +15,8 @@ namespace LinnMacroCustomer
 
 
             // Set required variables
-            string source                = "Shopify";
-            string subSource             = "UWHome";
+            string source                = "";
+            string subSource             = "UW Home";
             string accountNumber         = "";
 
             string SFTPServer            = "sftp.jrslsecure.com/";
@@ -29,13 +29,13 @@ namespace LinnMacroCustomer
 
             string sortField             = "";
             string sortDirection         = "";
-            int    lastDays              = 2;
+            int    lastDays              = 14;
 
             bool   addShippingCharge     = false;
             string shippingChargeSku     = "";
-            string extendedPropertyName  = "";
+            string extendedPropertyName  = "soldto";
 
-            string priceFlag             = "";
+            string priceFlag             = "P";
             string orderType             = "SO";
             string branchPlan            = "90";
             string shipTo                = "";
