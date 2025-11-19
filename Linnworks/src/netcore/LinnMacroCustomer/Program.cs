@@ -31,8 +31,8 @@ namespace LinnMacroCustomer
             string sortDirection         = "";
             int    lastDays              = 14;
 
-            bool   addShippingCharge     = false;
-            string shippingChargeSku     = "";
+            bool   addShippingCharge     = true;
+            string shippingChargeSku     = "NS100000000ZZ";
             string extendedPropertyName  = "soldto";
 
             string priceFlag             = "P";
