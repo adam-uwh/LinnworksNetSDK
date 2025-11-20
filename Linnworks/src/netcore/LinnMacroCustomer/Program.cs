@@ -29,7 +29,7 @@ namespace LinnMacroCustomer
 
             string sortField             = "";
             string sortDirection         = "";
-            int    lastDays              = 14;
+            int    lastDays              = 20;
 
             bool   addShippingCharge     = true;
             string shippingChargeSku     = "NS100000000ZZ";
@@ -42,8 +42,8 @@ namespace LinnMacroCustomer
             string shipCode              = "";
             string holdStatus            = "";
 
-            bool   addDispatchDays       = false;  // corrected type
-            int    dispatchModifier      = 1;
+            bool   addDispatchDays       = true;  // corrected type
+            int    dispatchModifier      = 11;
 
             string folderUpdated         = "Updated";
             string folderCompleted       = "In JDE";
