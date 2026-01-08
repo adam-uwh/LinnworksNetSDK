@@ -13,8 +13,48 @@ namespace LinnMacroCustomer
 
             var macro = SetupMacro(applicationId, secretKey, token);
 
+            //////////////////////////////////////////////////////////////////////////////
+            /// Configure Parameters for UW Home Linnworks Default Stock Check Macro 
+            /// //////////////////////////////////////////////////////////////////////////
+            
+            // Order IDs to process (replace with actual order GUIDs for testing)
+            Guid[] orderIds = new Guid[]
+            {
+                new Guid("00000000-0000-0000-0000-000000000000"), // Replace with actual order ID
+                // Add more order IDs as needed
+            };
 
+            // Folder names
+            string outOfStockFolder = "Out of Stock";
+            string toBeCancelledFolder = "To Be Cancelled";
+            string newFolder = "New";
+            string updatedFolder = "Updated";
+
+            // Extended property names
+            string channelUpdatesRequiredProperty = "ChannelUpdatesRequired";
+            string backOrdersProperty = "BackOrders";
+
+            // Execute the macro with all parameters
+            macro.Execute(
+                orderIds,
+                outOfStockFolder,
+                toBeCancelledFolder,
+                newFolder,
+                updatedFolder,
+                channelUpdatesRequiredProperty,
+                backOrdersProperty
+            );
+
+            //////////////////////////////////////////////////////////////////////////////
+            /// END Configure Parameters for UW Home Linnworks Default Stock Check Macro 
+            /// //////////////////////////////////////////////////////////////////////////
+
+
+            //////////////////////////////////////////////////////////////////////////////
+            /// Configure Parameters for UW Home B2B JDE Export Macro 
+            /// //////////////////////////////////////////////////////////////////////////
             // Set required variables
+            /*
             string source                = "";
             string subSource             = "UW Home";
             string accountNumber         = "";
@@ -80,6 +120,10 @@ namespace LinnMacroCustomer
                 folderCompleted,
                 ignoreUnknownSKUs
             );
+            */
+            //////////////////////////////////////////////////////////////////////////////
+            /// END Configure Parameters for UW Home B2B JDE Export Macro 
+            /// //////////////////////////////////////////////////////////////////////////
 
             Console.WriteLine("Processed order check complete.");
             Console.Read();
