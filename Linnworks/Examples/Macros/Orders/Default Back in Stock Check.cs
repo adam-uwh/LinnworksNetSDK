@@ -1,45 +1,85 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
+using System. Collections.Generic;
+using System. Linq;
 using LinnworksAPI;
-//using LinnworksMacroHelpers.Classes;
 using System.ComponentModel;
-//using Newtonsoft.Json; 
 
 namespace LinnworksMacro
 {
     public class LinnworksMacro : LinnworksMacroHelpers.LinnworksMacroBase
     {
+        /// <summary>
+        /// UW Home Linnworks Default Back in Stock Check Macro. 
+        /// This macro retrieves orders from a specified folder and checks if stock is now available for all items.
+        /// 
+        /// Logic:
+        /// - Orders are retrieved from the specified check folder at the specified location
+        /// - For each order, stock availability is checked for all items
+        /// - If there is insufficient stock:  
+        ///   - If the order has BackOrders extended property set to TRUE, assign to the specified out of stock folder
+        ///   - Otherwise, assign to the specified to be cancelled folder
+        /// - If there is sufficient stock:
+        ///   - If the order has ChannelUpdatesRequired extended property set to TRUE, assign to the specified new orders folder
+        ///   - Otherwise, assign to the specified updated folder
+        /// 
+        /// When insufficient stock is detected, an order note is added indicating the stock shortage.
+        /// When sufficient stock is detected, an order note is added indicating stock is now available.
+        /// Orders with unknown SKUs can optionally be filtered out.
+        /// If a stock item is not found, it is treated as insufficient stock and an error is logged.
+        /// Parked orders are skipped.
+        /// </summary>
+        /// <param name="locationId">The GUID of the location to check stock levels against</param>
+        /// <param name="checkFolder">The folder name to retrieve orders from for stock checking</param>
+        /// <param name="outOfStockFolder">The folder name to assign orders with insufficient stock when back orders are allowed</param>
+        /// <param name="toBeCancelledFolder">The folder name to assign orders with insufficient stock when back orders are not allowed</param>
+        /// <param name="newFolder">The folder name to assign orders with sufficient stock that require channel updates</param>
+        /// <param name="updatedFolder">The folder name to assign orders with sufficient stock that do not require channel updates</param>
+        /// <param name="channelUpdatesRequiredProperty">The name of the extended property that indicates if channel updates are required</param>
+        /// <param name="backOrdersProperty">The name of the extended property that indicates if back orders are allowed</param>
+        /// <param name="ignoreUnknownSKUs">If true, orders with unlinked/unknown SKUs will be filtered out</param>
+
         public void Execute(
-            string folderName,
-            string moveToFolder,
-            string updateFolder,
             string locationId,
-            int tagNumber,
-            int lastDays,
-            bool ignoreUnknownSKUs
-        )
+            string checkFolder,
+            string outOfStockFolder,
+            string toBeCancelledFolder,
+            string newFolder,
+            string updatedFolder,
+            string channelUpdatesRequiredProperty,
+            string backOrdersProperty,
+            bool ignoreUnknownSKUs)
         {
-            Logger.WriteInfo("Starting order retrieval with filters:");
-            Logger.WriteInfo($"Check Folder: {folderName}, Move Folder: {moveToFolder}, Update Folder: {updateFolder}, Location Guid: {locationId}, Tag: {tagNumber}, LastDays: {lastDays}, IgnoreUnknownSKUs: {ignoreUnknownSKUs}");
+            Logger.WriteDebug("Starting macro");
+            Logger.WriteInfo("Starting back in stock check with filters:");
+            Logger.WriteInfo($"Check Folder: {checkFolder}, Location Guid: {locationId}, IgnoreUnknownSKUs:  {ignoreUnknownSKUs}");
+            Logger.WriteInfo($"Out of Stock Folder: {outOfStockFolder}, To Be Cancelled Folder: {toBeCancelledFolder}");
+            Logger.WriteInfo($"New Folder: {newFolder}, Updated Folder: {updatedFolder}");
+            Logger.WriteInfo($"Channel Updates Property: {channelUpdatesRequiredProperty}, Back Orders Property: {backOrdersProperty}");
 
             Guid locationGuid;
             if (!Guid.TryParse(locationId, out locationGuid))
             {
-                Logger.WriteError($"Invalid locationId: {locationId}");
-                locationGuid = Guid.Empty; // fallback or handle as needed
+                Logger. WriteError($"Invalid locationId:  {locationId}");
+                return;
             }
 
-            var sortedOrders = GetOrderDetails(folderName, lastDays, ignoreUnknownSKUs, locationGuid);
+            var orders = GetOrderDetails(checkFolder, ignoreUnknownSKUs, locationGuid);
 
-            Logger.WriteInfo($"Total orders returned: {sortedOrders.Count}");
-            foreach (var order in sortedOrders)
+            Logger. WriteInfo($"Total orders returned:  {orders.Count}");
+            foreach (var order in orders)
             {
-                Logger.WriteInfo($"OrderId: {order.OrderId}, Reference: {order.GeneralInfo.ReferenceNum}, NumOrderId: {order.NumOrderId}, Items: {order.Items.Count}");
+                Logger.WriteDebug($"OrderId: {order.OrderId}, Reference: {order.GeneralInfo.ReferenceNum}, NumOrderId: {order.NumOrderId}, Items: {order.Items. Count}");
             }
 
-            foreach (var order in sortedOrders)
+            foreach (var order in orders)
             {
+                // Skip parked orders
+                if (order.GeneralInfo != null && order.GeneralInfo. IsParked)
+                {
+                    Logger.WriteInfo($"Order {order.OrderId} is parked - skipping.");
+                    continue;
+                }
+
                 bool insufficientStock = false;
 
                 foreach (var item in order.Items)
@@ -47,7 +87,7 @@ namespace LinnworksMacro
                     var request = new LinnworksAPI.GetStockLevelByLocationRequest
                     {
                         StockItemId = item.StockItemId,
-                        LocationId = locationGuid 
+                        LocationId = locationGuid
                     };
 
                     var stockItemLevel = Api.Stock.GetStockLevelByLocation(request);
@@ -58,14 +98,13 @@ namespace LinnworksMacro
                         break;
                     }
 
-                    // Null or negative available stock is insufficient
                     if (stockItemLevel.StockLevel == null ||
                         stockItemLevel.StockLevel.Available < item.Quantity ||
-                        stockItemLevel.StockLevel.Available < 0)
+                        stockItemLevel.StockLevel. Available < 0)
                     {
                         insufficientStock = true;
-                        Logger.WriteInfo(
-                            $"Insufficient stock for item {item.StockItemId} in order {order.OrderId}: required {item.Quantity}, available {(stockItemLevel.StockLevel?.Available.ToString() ?? "null")}"
+                        Logger. WriteInfo(
+                            $"Insufficient stock for item {item. StockItemId} in order {order.OrderId}: required {item.Quantity}, available {(stockItemLevel.StockLevel?.Available.ToString() ?? "null")}"
                         );
                         break;
                     }
@@ -74,96 +113,141 @@ namespace LinnworksMacro
                 // Check for ChannelUpdatesRequired extended property
                 bool channelUpdatesRequired = order.ExtendedProperties != null &&
                     order.ExtendedProperties.Any(ep =>
-                        ep.Name == "ChannelUpdatesRequired" &&
+                        ep.Name == channelUpdatesRequiredProperty &&
                         string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
                     );
 
-                Logger.WriteInfo($"ChannelUpdateRequired: {channelUpdatesRequired} in order {order.OrderId}");
+                // Check for BackOrders extended property
+                bool backOrders = order. ExtendedProperties != null &&
+                    order.ExtendedProperties.Any(ep =>
+                        ep.Name == backOrdersProperty &&
+                        string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
+                    );
 
-                if (!insufficientStock)
+                try
                 {
-                    try
+                    if (insufficientStock)
                     {
-                        // Change order status to PAID (1)
-                        Api.Orders.ChangeStatus(new List<Guid> { order.OrderId }, 1); // Set to PAID
-                        Logger.WriteInfo($"Order {order.OrderId} status changed to PAID.");
+                        string targetFolder = backOrders ? outOfStockFolder : toBeCancelledFolder;
+                        string reason = backOrders ? "back orders allowed" : "back orders not allowed";
+
+                        Logger.WriteDebug($"Attempting to assign order {order.OrderId} to folder '{targetFolder}' (insufficient stock, {reason})");
+
+                        try
+                        {
+                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, targetFolder);
+                            Logger.WriteInfo($"Order {order.OrderId} has insufficient stock and {reason} - assigned to '{targetFolder}' folder.");
+                        }
+                        catch (Exception folderEx)
+                        {
+                            Logger.WriteError($"Failed to assign order {order.OrderId} to folder '{targetFolder}': {folderEx.Message}");
+                            Logger.WriteDebug($"Folder assignment error details: {folderEx}");
+                            throw;
+                        }
 
                         // Add order note without overwriting existing notes
-                        var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
-                        existingNotes.Add(new OrderNote
+                        try
                         {
-                            Note = "Order updated to PAID as stock now available for all lines.",
-                            CreatedBy = "Rules Engine"
-                        });
-                        Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
-                        Logger.WriteInfo($"Order note added to order {order.OrderId}.");
+                            var existingNotes = Api.Orders.GetOrderNotes(order. OrderId) ?? new List<OrderNote>();
+                            Logger.WriteDebug($"Found {existingNotes.Count} existing notes for order {order.OrderId}");
 
-                        // Move to appropriate folder and tag based on ChannelUpdatesRequired
-                        if (channelUpdatesRequired)
-                        {
-                            Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, tagNumber); // Tag 6
-                            Logger.WriteInfo($"Order {order.OrderId} tagged with {tagNumber}.");
+                            existingNotes.Add(new OrderNote
+                            {
+                                OrderNoteId = Guid.NewGuid(),
+                                OrderId = order.OrderId,
+                                NoteDate = DateTime.UtcNow,
+                                Internal = false,
+                                Note = "Order has insufficient stock available for all lines.",
+                                CreatedBy = "Rules Engine",
+                                NoteTypeId = null
+                            });
 
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, moveToFolder);
-                            Logger.WriteInfo($"Order {order.OrderId} moved to folder {moveToFolder}.");
+                            Logger.WriteDebug($"Attempting to set {existingNotes.Count} notes for order {order.OrderId}");
+                            Api.Orders. SetOrderNotes(order.OrderId, existingNotes);
+                            Logger.WriteInfo($"Order note added to order {order.OrderId}.");
                         }
-                        else
+                        catch (Exception noteEx)
                         {
-                            Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, null);
-                            Logger.WriteInfo($"Order {order.OrderId} tagged with null.");
-
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, updateFolder);
-                            Logger.WriteInfo($"Order {order.OrderId} moved to folder {updateFolder}.");                            
+                            Logger. WriteError($"Failed to add note to order {order.OrderId}: {noteEx.Message}");
+                            Logger.WriteDebug($"Note error stack trace: {noteEx. StackTrace}");
                         }
-
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        Logger.WriteError($"Failed to update order {order.OrderId}: {ex.Message}");
+                        string targetFolder = channelUpdatesRequired ? newFolder :  updatedFolder;
+                        string reason = channelUpdatesRequired ?  "requires channel update" : "no channel update required";
+
+                        Logger.WriteDebug($"Attempting to assign order {order.OrderId} to folder '{targetFolder}' (sufficient stock, {reason})");
+
+                        try
+                        {
+                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, targetFolder);
+                            Logger.WriteInfo($"Order {order.OrderId} has sufficient stock and {reason} - assigned to '{targetFolder}' folder.");
+                        }
+                        catch (Exception folderEx)
+                        {
+                            Logger.WriteError($"Failed to assign order {order.OrderId} to folder '{targetFolder}': {folderEx.Message}");
+                            Logger.WriteDebug($"Folder assignment error details: {folderEx}");
+                            throw;
+                        }
+
+                        // Add order note without overwriting existing notes
+                        try
+                        {
+                            var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
+                            Logger.WriteDebug($"Found {existingNotes.Count} existing notes for order {order.OrderId}");
+
+                            existingNotes.Add(new OrderNote
+                            {
+                                OrderNoteId = Guid.NewGuid(),
+                                OrderId = order.OrderId,
+                                NoteDate = DateTime. UtcNow,
+                                Internal = false,
+                                Note = "Order updated as stock now available for all lines.",
+                                CreatedBy = "Rules Engine",
+                                NoteTypeId = null
+                            });
+
+                            Logger.WriteDebug($"Attempting to set {existingNotes.Count} notes for order {order.OrderId}");
+                            Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
+                            Logger. WriteInfo($"Order note added to order {order.OrderId}.");
+                        }
+                        catch (Exception noteEx)
+                        {
+                            Logger.WriteError($"Failed to add note to order {order.OrderId}: {noteEx.Message}");
+                            Logger.WriteDebug($"Note error stack trace: {noteEx. StackTrace}");
+                        }
                     }
+                }
+                catch (Exception ex)
+                {
+                    Logger.WriteError($"Failed to update order {order.OrderId}: {ex.Message}");
+                    Logger.WriteDebug($"Error stack trace: {ex.StackTrace}");
                 }
             }
         }
 
-        private List<OrderDetails> GetOrderDetails(string folderName, int lastDays, bool ignoreUnknownSKUs, Guid locationGuid)
+        private List<OrderDetails> GetOrderDetails(string folderName, bool ignoreUnknownSKUs, Guid locationGuid)
         {
             List<OrderDetails> orders = new List<OrderDetails>();
 
-            // Filter for paid, folder, and date
+            // Filter for folder
             FieldsFilter filter = new FieldsFilter()
             {
                 ListFields = new List<ListFieldFilter>()
                 {
                     new ListFieldFilter()
                     {
-                        FieldCode = FieldCode.GENERAL_INFO_STATUS, // Use status as a ListFieldFilter
-                        Value = "1",  // 1 corresponds to PAID status
-                        Type = ListFieldFilterType.Is
-                    },
-                    new ListFieldFilter()
-                    {
                         FieldCode = FieldCode.FOLDER,
                         Value = folderName,
                         Type = ListFieldFilterType.Is
                     }
-                },
-                DateFields = new List<DateFieldFilter>()
-                {
-                    new DateFieldFilter()
-                    {
-                        FieldCode = FieldCode.GENERAL_INFO_DATE,
-                        Type = DateTimeFieldFilterType.OlderThan,
-                        Value = lastDays
-                    }
                 }
             };
 
-            // Log the filter object as JSON
-            //Logger.WriteInfo("Final filter: " + JsonConvert.SerializeObject(filter, Formatting.Indented));
-
             // Sorting setup
-            FieldCode sortingCode = FieldCode.GENERAL_INFO_REFERENCE_NUMBER;
-            ListSortDirection sortingDirection = ListSortDirection.Ascending;
+            FieldCode sortingCode = FieldCode. GENERAL_INFO_REFERENCE_NUMBER;
+            ListSortDirection sortingDirection = ListSortDirection. Ascending;
 
             Logger.WriteInfo("Querying order GUIDs from Linnworks...");
             List<Guid> guids = Api.Orders.GetAllOpenOrders(filter, new List<FieldSorting>()
@@ -183,7 +267,7 @@ namespace LinnworksMacro
                 for (int i = 0; i < guids.Count; i += 200)
                 {
                     var batch = guids.Skip(i).Take(200).ToList();
-                    Logger.WriteInfo($"Fetching order details for batch {i / 200 + 1}: {batch.Count} orders");
+                    Logger.WriteInfo($"Fetching order details for batch {i / 200 + 1}:  {batch.Count} orders");
                     orders.AddRange(Api.Orders.GetOrdersById(batch));
                 }
             }
@@ -212,20 +296,10 @@ namespace LinnworksMacro
 
             // Final sort
             List<OrderDetails> sortedOrders;
-            if (sortingCode == FieldCode.GENERAL_INFO_ORDER_ID)
-            {
-                if (sortingDirection == ListSortDirection.Ascending)
-                    sortedOrders = orders.OrderBy(order => order.NumOrderId).ToList();
-                else
-                    sortedOrders = orders.OrderByDescending(order => order.NumOrderId).ToList();
-            }
+            if (sortingDirection == ListSortDirection.Ascending)
+                sortedOrders = orders.OrderBy(order => order.GeneralInfo.ReferenceNum).ToList();
             else
-            {
-                if (sortingDirection == ListSortDirection.Ascending)
-                    sortedOrders = orders.OrderBy(order => order.GeneralInfo.ReferenceNum).ToList();
-                else
-                    sortedOrders = orders.OrderByDescending(order => order.GeneralInfo.ReferenceNum).ToList();
-            }
+                sortedOrders = orders.OrderByDescending(order => order. GeneralInfo.ReferenceNum).ToList();
 
             Logger.WriteInfo($"Sorted orders count: {sortedOrders.Count}");
             return sortedOrders;

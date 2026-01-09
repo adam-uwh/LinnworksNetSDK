@@ -8,20 +8,37 @@ namespace LinnworksMacro
     public class LinnworksMacro : LinnworksMacroHelpers.LinnworksMacroBase
     {
         /// <summary>
-        /// Linworks New Order In Stock Check Macro.
-        /// The entry point for this macro, this function will be executed and its result returned when the macro is run
-        /// This macro checks a new order to see if there is enough stock available for all items in the order.
-        /// If there is insufficient stock, it will move the order to the 'Out of Stock' folder and add a note to the order. 
-        /// If there is sufficient stock, it will change the order status to PAID and move the order to the 'New' folder.
-        /// It will also tag the order with tag 6 if it requires channel updates, otherwise it will remove any tag.
-        /// It checks the 'ChannelUpdatesRequired' extended property to determine if channel updates are needed.
-        /// If the stock item is not found, it will log an error and treat it as insufficient stock.
-        /// It uses the fulfilment location from the order details to check stock levels.
+        /// UW Home Linnworks Default Stock Check Macro. 
+        /// This macro checks new orders to determine if there is sufficient stock available for all items.
+        /// 
+        /// Logic:
+        /// - If there is insufficient stock: 
+        ///   - If the order has BackOrders extended property set to TRUE, assign to the specified out of stock folder
+        ///   - Otherwise, assign to the specified to be cancelled folder
+        /// - If there is sufficient stock:
+        ///   - If the order has ChannelUpdatesRequired extended property set to TRUE, assign to the specified new orders folder
+        ///   - Otherwise, assign to the specified updated folder
+        /// 
+        /// When insufficient stock is detected, an order note is added indicating the stock shortage.
+        /// The macro uses the fulfilment location from the order details to check stock levels.
+        /// If a stock item is not found, it is treated as insufficient stock and an error is logged.
         /// </summary>
         /// <param name="OrderIds">An array of GUID order IDs on which to perform operations (passed when a rules engine rule executes a macro)</param>
+        /// <param name="outOfStockFolder">The folder name to assign orders with insufficient stock when back orders are allowed</param>
+        /// <param name="toBeCancelledFolder">The folder name to assign orders with insufficient stock when back orders are not allowed</param>
+        /// <param name="newFolder">The folder name to assign orders with sufficient stock that require channel updates</param>
+        /// <param name="updatedFolder">The folder name to assign orders with sufficient stock that do not require channel updates</param>
+        /// <param name="channelUpdatesRequiredProperty">The name of the extended property that indicates if channel updates are required</param>
+        /// <param name="backOrdersProperty">The name of the extended property that indicates if back orders are allowed</param>
 
-        public void Execute(Guid[] OrderIds)
-
+        public void Execute(
+            Guid[] OrderIds,
+            string outOfStockFolder,
+            string toBeCancelledFolder,
+            string newFolder,
+            string updatedFolder,
+            string channelUpdatesRequiredProperty,
+            string backOrdersProperty)
         {
             Logger.WriteDebug("Starting macro");
 
@@ -29,6 +46,13 @@ namespace LinnworksMacro
 
             foreach (var order in orders)
             {
+                // Skip parked orders
+                if (order.GeneralInfo != null && order.GeneralInfo.IsParked)
+                {
+                    Logger.WriteInfo($"Order {order.OrderId} is parked - skipping.");
+                    continue;
+                }
+
                 bool insufficientStock = false;
 
                 foreach (var item in order.Items)
@@ -36,7 +60,7 @@ namespace LinnworksMacro
                     var request = new LinnworksAPI.GetStockLevelByLocationRequest
                     {
                         StockItemId = item.StockItemId,
-                        LocationId = order.FulfilmentLocationId // Use the location from order details
+                        LocationId = order.FulfilmentLocationId
                     };
 
                     var stockItemLevel = Api.Stock.GetStockLevelByLocation(request);
@@ -47,9 +71,7 @@ namespace LinnworksMacro
                         break;
                     }
 
-                    // Null or negative available stock is insufficient
-                    if (stockItemLevel == null ||
-                        stockItemLevel.StockLevel.Available < item.Quantity ||
+                    if (stockItemLevel.StockLevel.Available < item.Quantity ||
                         stockItemLevel.StockLevel.Available < 0)
                     {
                         insufficientStock = true;
@@ -63,7 +85,14 @@ namespace LinnworksMacro
                 // Check for ChannelUpdatesRequired extended property
                 bool channelUpdatesRequired = order.ExtendedProperties != null &&
                     order.ExtendedProperties.Any(ep =>
-                        ep.Name == "ChannelUpdatesRequired" &&
+                        ep.Name == channelUpdatesRequiredProperty &&
+                        string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
+                    );
+
+                // Check for BackOrders extended property
+                bool backOrders = order.ExtendedProperties != null &&
+                    order.ExtendedProperties.Any(ep =>
+                        ep.Name == backOrdersProperty &&
                         string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
                     );
 
@@ -71,54 +100,74 @@ namespace LinnworksMacro
                 {
                     if (insufficientStock)
                     {
-
-                        if (channelUpdatesRequired)
-                        {
-                            Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, 6);
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, "Out of Stock");
-                            Logger.WriteInfo($"Order {order.OrderId} requires channel updates so tagged with 6 and moved to Out of Stock folder due to insufficient stock.");
-                        }
-                        else
-                        {
-                            Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, null);
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, "Out of Stock");
-                            Logger.WriteInfo($"Order {order.OrderId} requires no channel updates so moved to Out of Stock folder due to insufficient stock.");
-
-                        }
+                        string targetFolder = backOrders ? outOfStockFolder : toBeCancelledFolder;
+                        string reason = backOrders ? "back orders allowed" : "back orders not allowed";
                         
-                        // Add order note without overwriting existing notes
-                            var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
-                        existingNotes.Add(new OrderNote
+                        Logger.WriteDebug($"Attempting to assign order {order.OrderId} to folder '{targetFolder}' (insufficient stock, {reason})");
+                        
+                        try
                         {
-                            Note = "Order has insufficient stock available for all lines.",
-                            CreatedBy = "Rules Engine"
-                        });
-                        Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
-                        Logger.WriteInfo($"Order note added to order {order.OrderId}.");
+                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, targetFolder);
+                            Logger.WriteInfo($"Order {order.OrderId} has insufficient stock and {reason} - assigned to '{targetFolder}' folder.");
+                        }
+                        catch (Exception folderEx)
+                        {
+                            Logger.WriteError($"Failed to assign order {order.OrderId} to folder '{targetFolder}': {folderEx.Message}");
+                            Logger.WriteDebug($"Folder assignment error details: {folderEx}");
+                            throw; // Re-throw to be caught by outer try-catch
+                        }
+
+                        // Add order note without overwriting existing notes
+                        try
+                        {
+                            var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
+                            Logger.WriteDebug($"Found {existingNotes.Count} existing notes for order {order.OrderId}");
+                            
+                            existingNotes.Add(new OrderNote
+                            {
+                                OrderNoteId = Guid.NewGuid(),
+                                OrderId = order.OrderId,
+                                NoteDate = DateTime.UtcNow,
+                                Internal = false,
+                                Note = "Order has insufficient stock available for all lines.",
+                                CreatedBy = "Rules Engine",
+                                NoteTypeId = null
+                            });
+                            
+                            Logger.WriteDebug($"Attempting to set {existingNotes.Count} notes for order {order.OrderId}");
+                            Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
+                            Logger.WriteInfo($"Order note added to order {order.OrderId}.");
+                        }
+                        catch (Exception noteEx)
+                        {
+                            Logger.WriteError($"Failed to add note to order {order.OrderId}: {noteEx.Message}");
+                            Logger.WriteDebug($"Note error stack trace: {noteEx.StackTrace}");
+                        }
                     }
                     else
                     {
-                        if (channelUpdatesRequired)
+                        string targetFolder = channelUpdatesRequired ? newFolder : updatedFolder;
+                        string reason = channelUpdatesRequired ? "requires channel update" : "no channel update required";
+                        
+                        Logger.WriteDebug($"Attempting to assign order {order.OrderId} to folder '{targetFolder}' (sufficient stock, {reason})");
+                        
+                        try
                         {
-                            // All items have sufficient stock, set status to PAID (1)
-                            Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, 6);
-                            Api.Orders.ChangeStatus(new List<Guid> { order.OrderId }, 1);
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, "New");
-                            Logger.WriteInfo($"Order {order.OrderId} status changed to PAID awaiting channel update and saved to NEW folder.");
+                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, targetFolder);
+                            Logger.WriteInfo($"Order {order.OrderId} has sufficient stock and {reason} - assigned to '{targetFolder}' folder.");
                         }
-                        else
+                        catch (Exception folderEx)
                         {
-                            // All items have sufficient stock, set status to PAID (1)
-                            Api.Orders.ChangeOrderTag(new List<Guid> { order.OrderId }, null);
-                            Api.Orders.ChangeStatus(new List<Guid> { order.OrderId }, 1);
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, "Updated");
-                            Logger.WriteInfo($"Order {order.OrderId} status changed to PAID no update required and moved to Updated folder.");
+                            Logger.WriteError($"Failed to assign order {order.OrderId} to folder '{targetFolder}': {folderEx.Message}");
+                            Logger.WriteDebug($"Folder assignment error details: {folderEx}");
+                            throw; // Re-throw to be caught by outer try-catch
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     Logger.WriteError($"Failed to update order {order.OrderId}: {ex.Message}");
+                    Logger.WriteDebug($"Error stack trace: {ex.StackTrace}");
                 }
             }
         }

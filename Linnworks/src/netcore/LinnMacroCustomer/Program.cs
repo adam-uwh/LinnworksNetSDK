@@ -18,17 +18,20 @@ namespace LinnMacroCustomer
             /// //////////////////////////////////////////////////////////////////////////
             
             // Order IDs to process (replace with actual order GUIDs for testing)
-            Guid[] orderIds = new Guid[]
+            /*Guid[] orderIds = new Guid[]
             {
-                new Guid("00000000-0000-0000-0000-000000000000"), // Replace with actual order ID
+                new Guid("7d1ce80b-6b5d-4e39-9346-2ecc9b528c15"), // Replace with actual order ID
                 // Add more order IDs as needed
-            };
+            };*/
 
             // Folder names
+            string locationId = "00000000-0000-0000-0000-000000000000";
+            string checkFolder = "Out of Stock";
             string outOfStockFolder = "Out of Stock";
             string toBeCancelledFolder = "To Be Cancelled";
-            string newFolder = "New";
+            string newFolder = "Back in Stock";
             string updatedFolder = "Updated";
+            bool ignoreUnknownSKUs = true;
 
             // Extended property names
             string channelUpdatesRequiredProperty = "ChannelUpdatesRequired";
@@ -36,13 +39,15 @@ namespace LinnMacroCustomer
 
             // Execute the macro with all parameters
             macro.Execute(
-                orderIds,
+                locationId,
+                checkFolder,
                 outOfStockFolder,
                 toBeCancelledFolder,
                 newFolder,
                 updatedFolder,
                 channelUpdatesRequiredProperty,
-                backOrdersProperty
+                backOrdersProperty,
+                ignoreUnknownSKUs
             );
 
             //////////////////////////////////////////////////////////////////////////////
