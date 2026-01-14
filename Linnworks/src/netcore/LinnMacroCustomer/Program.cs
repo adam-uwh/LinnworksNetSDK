@@ -14,6 +14,78 @@ namespace LinnMacroCustomer
             var macro = SetupMacro(applicationId, secretKey, token);
 
             //////////////////////////////////////////////////////////////////////////////
+            /// Configure Parameters for UW Home Linnworks Default Channel Updater Macro 
+            /// //////////////////////////////////////////////////////////////////////////
+
+            /// Parameters
+            string Source = "DATAIMPORTEXPORT";
+            string subSource = "MultiVery";
+            string notifyAcknowledge = "TRUE";
+            string notifyOOS = "FALSE";
+            string notifyBIS = "FALSE";
+            string notifyShipped = "TRUE";
+            string actionCancelled = "TRUE";
+            string notifyCancelled = "TRUE";
+            string newFolder = "NEW";
+            string oosFolder = "Out of Stock";
+            string bisFolder = "Back in Stock";
+            string cancelFolder = "To Be Cancelled";
+            string SFTPServer = "sftp.jrslsecure.com";
+            int SFTPPort = 22;
+            string SFTPUsername = "Ecommerce";
+            string SFTPPassword = "1f3942Ns";
+            string SFTPFolderRoot = "DSV Operations/Customers/1611-Very";
+            string acknowledgeDirectory = "Notify-Acknowledged";
+            string oosDirectory = "Notify-OOS";
+            string bisDirectory = "Notify-BIS";
+            string shippedDirectory = "Notify-Shipped";
+            string actionCancelledDirectory = "Notify-Cancelled";
+            string cancelDirectory = "Notify-Cancelled";
+            string filetype = "Direct";
+            string sortField = "GENERAL_INFO_ORDER_ID";
+            string sortDirection = "ASC";
+            int lookBackDays = 5;
+            string localFilePath = @"C:\Users\adamw\OneDrive - johnhogggroup\Documents\Projects\LinnworksMacro";
+            string outputMethod = "Local"; /// Local or FTP;
+
+            macro.Execute(
+            Source,
+            subSource,
+            notifyAcknowledge,
+            notifyOOS,
+            notifyBIS,
+            notifyShipped,
+            actionCancelled,
+            notifyCancelled,
+            newFolder,
+            oosFolder,
+            bisFolder,
+            cancelFolder,
+            SFTPServer,
+            SFTPPort,
+            SFTPUsername,
+            SFTPPassword,
+            SFTPFolderRoot,
+            acknowledgeDirectory,
+            oosDirectory,
+            bisDirectory,
+            shippedDirectory,
+            actionCancelledDirectory,
+            cancelDirectory,
+            filetype,
+            sortField,
+            sortDirection,
+            lookBackDays,
+            localFilePath,
+            outputMethod
+            );
+
+
+            //////////////////////////////////////////////////////////////////////////////
+            /// END Configure Parameters for UW Home Linnworks Default Channel Updater Macro  
+            /// //////////////////////////////////////////////////////////////////////////
+
+            //////////////////////////////////////////////////////////////////////////////
             /// Configure Parameters for UW Home Linnworks Default Stock Check Macro 
             /// //////////////////////////////////////////////////////////////////////////
             
@@ -24,6 +96,7 @@ namespace LinnMacroCustomer
                 // Add more order IDs as needed
             };*/
 
+            /*
             // Folder names
             string locationId = "00000000-0000-0000-0000-000000000000";
             string checkFolder = "Out of Stock";
@@ -50,6 +123,7 @@ namespace LinnMacroCustomer
                 ignoreUnknownSKUs
             );
 
+            */
             //////////////////////////////////////////////////////////////////////////////
             /// END Configure Parameters for UW Home Linnworks Default Stock Check Macro 
             /// //////////////////////////////////////////////////////////////////////////

@@ -1,308 +1,1264 @@
-﻿using System;
-using System. Collections.Generic;
+﻿// UW Home Default Channel Updater
+// ================================
+// 
+// SUMMARY: 
+// This Linnworks macro processes orders and generates CSV files for various notification types,
+// uploading them via SFTP or saving locally based on the outputMethod parameter.
+// After successful file output, the corresponding ExtendedProperty is set to TRUE for each order.
+//
+// FUNCTIONALITY:
+// 1. notifyAcknowledge (Type: Open)
+//    - Returns ALL open orders (not just 'New' folder) filtered by subSource
+//    - Excludes orders where ExtendedProperty 'statusACK' is TRUE
+//    - Only includes orders where 'statusACK' is FALSE or not set
+//    - Excludes parked and unpaid orders (Status=1 means PAID)
+//    - After processing, moves orders to 'Updated' folder
+//    - After processing, sets ExtendedProperty 'statusACK' to TRUE
+//
+// 2. notifyOOS (Type: Open)
+//    - Returns open orders in the specified oosFolder filtered by subSource
+//    - Excludes orders where ExtendedProperty 'statusOOS' is TRUE
+//    - Only includes orders where 'statusOOS' is FALSE or not set
+//    - Excludes parked and unpaid orders
+//    - After processing, sets ExtendedProperty 'statusOOS' to TRUE
+//
+// 3. notifyBIS (Type: Open)
+//    - Returns open orders in the specified bisFolder filtered by subSource
+//    - Excludes orders where ExtendedProperty 'statusBIS' is TRUE
+//    - Only includes orders where 'statusBIS' is FALSE or not set
+//    - Excludes parked and unpaid orders
+//    - After processing, moves orders to 'Updated' folder
+//    - After processing, sets ExtendedProperty 'statusBIS' to TRUE
+//
+// 4. notifyShipped (Type: Shipped)
+//    - Returns processed/shipped orders within lookBackDays
+//    - Filtered by subSource and Source
+//    - Excludes orders where ExtendedProperty 'StatusASN' is TRUE
+//    - Only includes orders where 'StatusASN' is FALSE or not set
+//    - Excludes orders already in 'Completed' folder
+//    - After processing, sets ExtendedProperty 'StatusASN' to TRUE
+//
+// 5. actionCancelled (Type: Open)
+//    - Returns open orders in the cancelFolder filtered by subSource
+//    - NO ExtendedProperty filtering applied
+//    - NO ExtendedProperty set after processing
+//    - Excludes parked and unpaid orders
+//    - Processes orders that are pending cancellation but not yet cancelled
+//
+// 6. notifyCancelled (Type: Cancelled)
+//    - Returns cancelled orders within lookBackDays
+//    - Filtered by subSource and Source
+//    - Excludes orders where ExtendedProperty 'StatusCANC' is TRUE
+//    - Only includes orders where 'StatusCANC' is FALSE or not set
+//    - Excludes orders already in 'Completed' folder
+//    - After processing, sets ExtendedProperty 'StatusCANC' to TRUE
+//
+// OUTPUT: 
+// - CSV files are either saved locally (outputMethod = "Local") or uploaded via SFTP (outputMethod = "FTP")
+// - Email notifications are sent after each file operation
+//
+// FILTERS APPLIED TO ALL OPEN ORDERS:
+// - Status = 1 (Paid - Note: In Linnworks, Status 0=UNPAID, 1=PAID, so filtering Status=1 ensures only paid orders)
+// - Parked = 0 (Not parked)
+// - Locked = 0 (Not locked)
+//
+// EXTENDED PROPERTY FILTERS & UPDATES:
+// | Notification Type  | EP Filter           | EP Set After Processing |
+// |--------------------|---------------------|-------------------------|
+// | notifyAcknowledge  | statusACK != TRUE   | statusACK = TRUE        |
+// | notifyOOS          | statusOOS != TRUE   | statusOOS = TRUE        |
+// | notifyBIS          | statusBIS != TRUE   | statusBIS = TRUE        |
+// | notifyShipped      | StatusASN != TRUE   | StatusASN = TRUE        |
+// | actionCancelled    | No EP filter        | No EP update            |
+// | notifyCancelled    | StatusCANC != TRUE  | StatusCANC = TRUE       |
+//
+// PARAMETERS:
+// - Source: The order source channel
+// - subSource: The order sub-source for filtering
+// - notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, actionCancelled, notifyCancelled: TRUE/FALSE flags
+// - newFolder, oosFolder, bisFolder, cancelFolder:  Folder names for different order states
+// - outputMethod: "Local" or "FTP" - determines where CSV files are saved
+// - SFTP*: SFTP connection parameters (used when outputMethod = "FTP")
+// - *Directory:  SFTP directory paths for each notification type
+// - filetype: File type identifier for naming
+// - sortField, sortDirection:  Sorting parameters
+// - lookBackDays: Number of days to look back for processed orders
+// - localFilePath: Local directory path for saving CSV files
+
+using System;
+using System.Collections.Generic;
 using System. Linq;
+using System.Text;
 using LinnworksAPI;
+using LinnworksMacroHelpers. Classes;
 using System.ComponentModel;
+using System.IO;
 
 namespace LinnworksMacro
 {
-    public class LinnworksMacro : LinnworksMacroHelpers.LinnworksMacroBase
+    public class LinnworksMacro :  LinnworksMacroHelpers.LinnworksMacroBase
     {
-        /// <summary>
-        /// UW Home Linnworks Default Back in Stock Check Macro. 
-        /// This macro retrieves orders from a specified folder and checks if stock is now available for all items.
-        /// 
-        /// Logic:
-        /// - Orders are retrieved from the specified check folder at the specified location
-        /// - For each order, stock availability is checked for all items
-        /// - If there is insufficient stock:  
-        ///   - If the order has BackOrders extended property set to TRUE, assign to the specified out of stock folder
-        ///   - Otherwise, assign to the specified to be cancelled folder
-        /// - If there is sufficient stock:
-        ///   - If the order has ChannelUpdatesRequired extended property set to TRUE, assign to the specified new orders folder
-        ///   - Otherwise, assign to the specified updated folder
-        /// 
-        /// When insufficient stock is detected, an order note is added indicating the stock shortage.
-        /// When sufficient stock is detected, an order note is added indicating stock is now available.
-        /// Orders with unknown SKUs can optionally be filtered out.
-        /// If a stock item is not found, it is treated as insufficient stock and an error is logged.
-        /// Parked orders are skipped.
-        /// </summary>
-        /// <param name="locationId">The GUID of the location to check stock levels against</param>
-        /// <param name="checkFolder">The folder name to retrieve orders from for stock checking</param>
-        /// <param name="outOfStockFolder">The folder name to assign orders with insufficient stock when back orders are allowed</param>
-        /// <param name="toBeCancelledFolder">The folder name to assign orders with insufficient stock when back orders are not allowed</param>
-        /// <param name="newFolder">The folder name to assign orders with sufficient stock that require channel updates</param>
-        /// <param name="updatedFolder">The folder name to assign orders with sufficient stock that do not require channel updates</param>
-        /// <param name="channelUpdatesRequiredProperty">The name of the extended property that indicates if channel updates are required</param>
-        /// <param name="backOrdersProperty">The name of the extended property that indicates if back orders are allowed</param>
-        /// <param name="ignoreUnknownSKUs">If true, orders with unlinked/unknown SKUs will be filtered out</param>
-
         public void Execute(
-            string locationId,
-            string checkFolder,
-            string outOfStockFolder,
-            string toBeCancelledFolder,
+            string Source,
+            string subSource,
+            string notifyAcknowledge,
+            string notifyOOS,
+            string notifyBIS,
+            string notifyShipped,
+            string actionCancelled,
+            string notifyCancelled,
             string newFolder,
-            string updatedFolder,
-            string channelUpdatesRequiredProperty,
-            string backOrdersProperty,
-            bool ignoreUnknownSKUs)
+            string oosFolder,
+            string bisFolder,
+            string cancelFolder,
+            string SFTPServer,
+            int SFTPPort,
+            string SFTPUsername,
+            string SFTPPassword,
+            string SFTPFolderRoot,
+            string acknowledgeDirectory,
+            string oosDirectory,
+            string bisDirectory,
+            string shippedDirectory,
+            string actionCancelledDirectory,
+            string cancelDirectory,
+            string filetype,
+            string sortField,
+            string sortDirection,
+            int lookBackDays,
+            string localFilePath,
+            string outputMethod
+        )
         {
-            Logger.WriteDebug("Starting macro");
-            Logger.WriteInfo("Starting back in stock check with filters:");
-            Logger.WriteInfo($"Check Folder: {checkFolder}, Location Guid: {locationId}, IgnoreUnknownSKUs:  {ignoreUnknownSKUs}");
-            Logger.WriteInfo($"Out of Stock Folder: {outOfStockFolder}, To Be Cancelled Folder: {toBeCancelledFolder}");
-            Logger.WriteInfo($"New Folder: {newFolder}, Updated Folder: {updatedFolder}");
-            Logger.WriteInfo($"Channel Updates Property: {channelUpdatesRequiredProperty}, Back Orders Property: {backOrdersProperty}");
+            this.Logger.WriteInfo("========================================");
+            this.Logger.WriteInfo("Starting macro:  UW Home Default Channel Updater");
+            this.Logger.WriteInfo("========================================");
+            this.Logger.WriteInfo($"Execution started at: {DateTime. Now: yyyy-MM-dd HH:mm: ss}");
+            
+            // Log all input parameters for debugging
+            this. Logger.WriteInfo("--- Input Parameters ---");
+            this.Logger. WriteInfo($"Source: {Source}");
+            this.Logger.WriteInfo($"subSource: {subSource}");
+            this.Logger.WriteInfo($"notifyAcknowledge:  {notifyAcknowledge}");
+            this.Logger. WriteInfo($"notifyOOS: {notifyOOS}");
+            this.Logger.WriteInfo($"notifyBIS: {notifyBIS}");
+            this.Logger.WriteInfo($"notifyShipped: {notifyShipped}");
+            this.Logger.WriteInfo($"actionCancelled:  {actionCancelled}");
+            this.Logger.WriteInfo($"notifyCancelled: {notifyCancelled}");
+            this.Logger.WriteInfo($"newFolder: {newFolder}");
+            this.Logger. WriteInfo($"oosFolder: {oosFolder}");
+            this.Logger. WriteInfo($"bisFolder: {bisFolder}");
+            this.Logger.WriteInfo($"cancelFolder:  {cancelFolder}");
+            this.Logger.WriteInfo($"outputMethod: {outputMethod}");
+            this.Logger.WriteInfo($"localFilePath: {localFilePath}");
+            this.Logger. WriteInfo($"sortField: {sortField}");
+            this.Logger.WriteInfo($"sortDirection:  {sortDirection}");
+            this.Logger.WriteInfo($"lookBackDays:  {lookBackDays}");
+            this.Logger.WriteInfo($"SFTPServer: {SFTPServer}");
+            this.Logger.WriteInfo($"SFTPPort: {SFTPPort}");
+            this.Logger.WriteInfo($"SFTPFolderRoot: {SFTPFolderRoot}");
+            this.Logger. WriteInfo("------------------------");
 
-            Guid locationGuid;
-            if (!Guid.TryParse(locationId, out locationGuid))
+            var notificationConfigs = new[]
             {
-                Logger. WriteError($"Invalid locationId:  {locationId}");
-                return;
-            }
+                new { Notify = notifyAcknowledge, NotifyType = "notifyAcknowledge", Folder = newFolder, Directory = acknowledgeDirectory, Type = "OpenAcknowledge", EPFilter = "statusACK", EPUpdate = "statusACK" },
+                new { Notify = notifyOOS, NotifyType = "notifyOOS", Folder = oosFolder, Directory = oosDirectory, Type = "Open", EPFilter = "statusOOS", EPUpdate = "statusOOS" },
+                new { Notify = notifyBIS, NotifyType = "notifyBIS", Folder = bisFolder, Directory = bisDirectory, Type = "Open", EPFilter = "statusBIS", EPUpdate = "statusBIS" },
+                new { Notify = notifyShipped, NotifyType = "notifyShipped", Folder = shippedDirectory, Directory = shippedDirectory, Type = "Shipped", EPFilter = "StatusASN", EPUpdate = "StatusASN" },
+                new { Notify = actionCancelled, NotifyType = "actionCancelled", Folder = cancelFolder, Directory = actionCancelledDirectory, Type = "OpenNoEPFilter", EPFilter = "", EPUpdate = "" },
+                new { Notify = notifyCancelled, NotifyType = "notifyCancelled", Folder = cancelDirectory, Directory = cancelDirectory, Type = "Cancelled", EPFilter = "StatusCANC", EPUpdate = "StatusCANC" }
+            };
 
-            var orders = GetOrderDetails(checkFolder, ignoreUnknownSKUs, locationGuid);
+            this.Logger.WriteInfo($"Total notification configs to process: {notificationConfigs.Length}");
 
-            Logger. WriteInfo($"Total orders returned:  {orders.Count}");
-            foreach (var order in orders)
+            int configIndex = 0;
+            foreach (var config in notificationConfigs)
             {
-                Logger.WriteDebug($"OrderId: {order.OrderId}, Reference: {order.GeneralInfo.ReferenceNum}, NumOrderId: {order.NumOrderId}, Items: {order.Items. Count}");
-            }
+                configIndex++;
+                this.Logger.WriteInfo("----------------------------------------");
+                this. Logger.WriteInfo($"Processing config {configIndex}/{notificationConfigs.Length}:  {config.NotifyType}");
+                this. Logger.WriteInfo($"  Notify flag value: {config. Notify}");
+                this.Logger.WriteInfo($"  Folder:  {config.Folder}");
+                this.Logger.WriteInfo($"  Directory:  {config.Directory}");
+                this. Logger.WriteInfo($"  Type: {config.Type}");
+                this.Logger.WriteInfo($"  EP Filter: {(string.IsNullOrEmpty(config.EPFilter) ? "NONE" : config. EPFilter)}");
+                this.Logger. WriteInfo($"  EP Update: {(string.IsNullOrEmpty(config. EPUpdate) ? "NONE" : config.EPUpdate)}");
 
-            foreach (var order in orders)
-            {
-                // Skip parked orders
-                if (order.GeneralInfo != null && order.GeneralInfo. IsParked)
+                if (! string. Equals(config. Notify, "TRUE", StringComparison.OrdinalIgnoreCase))
                 {
-                    Logger.WriteInfo($"Order {order.OrderId} is parked - skipping.");
+                    this.Logger.WriteInfo($"  SKIPPED: {config.NotifyType} is not set to TRUE");
                     continue;
                 }
 
-                bool insufficientStock = false;
+                this.Logger.WriteInfo($"  Processing {config.NotifyType}.. .");
 
-                foreach (var item in order.Items)
-                {
-                    var request = new LinnworksAPI.GetStockLevelByLocationRequest
-                    {
-                        StockItemId = item.StockItemId,
-                        LocationId = locationGuid
-                    };
-
-                    var stockItemLevel = Api.Stock.GetStockLevelByLocation(request);
-                    if (stockItemLevel == null)
-                    {
-                        Logger.WriteError($"Stock item not found for item {item.StockItemId} in order {order.OrderId}");
-                        insufficientStock = true;
-                        break;
-                    }
-
-                    if (stockItemLevel.StockLevel == null ||
-                        stockItemLevel.StockLevel.Available < item.Quantity ||
-                        stockItemLevel.StockLevel. Available < 0)
-                    {
-                        insufficientStock = true;
-                        Logger. WriteInfo(
-                            $"Insufficient stock for item {item. StockItemId} in order {order.OrderId}: required {item.Quantity}, available {(stockItemLevel.StockLevel?.Available.ToString() ?? "null")}"
-                        );
-                        break;
-                    }
-                }
-
-                // Check for ChannelUpdatesRequired extended property
-                bool channelUpdatesRequired = order.ExtendedProperties != null &&
-                    order.ExtendedProperties.Any(ep =>
-                        ep.Name == channelUpdatesRequiredProperty &&
-                        string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
-                    );
-
-                // Check for BackOrders extended property
-                bool backOrders = order. ExtendedProperties != null &&
-                    order.ExtendedProperties.Any(ep =>
-                        ep.Name == backOrdersProperty &&
-                        string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
-                    );
+                List<OrderDetails> orders = new List<OrderDetails>();
 
                 try
                 {
-                    if (insufficientStock)
+                    if (config.Type == "OpenAcknowledge")
                     {
-                        string targetFolder = backOrders ? outOfStockFolder : toBeCancelledFolder;
-                        string reason = backOrders ? "back orders allowed" : "back orders not allowed";
+                        this.Logger.WriteInfo($"  Fetching ALL open orders for Acknowledge (filtered by statusACK EP)...");
+                        orders = GetFilteredOpenOrdersForAcknowledge(subSource, sortField, sortDirection);
+                    }
+                    else if (config.Type == "Open")
+                    {
+                        this. Logger.WriteInfo($"  Fetching open orders from folder '{config.Folder}' with EP filter '{config.EPFilter}'...");
+                        orders = GetFilteredOpenOrders(subSource, config.Folder, sortField, sortDirection, config.EPFilter);
+                    }
+                    else if (config.Type == "OpenNoEPFilter")
+                    {
+                        this.Logger.WriteInfo($"  Fetching open orders from folder '{config.Folder}' WITHOUT EP filter...");
+                        orders = GetFilteredOpenOrdersNoEPFilter(subSource, config.Folder, sortField, sortDirection);
+                    }
+                    else
+                    {
+                        bool isShipped = config.Type == "Shipped";
+                        this.Logger.WriteInfo($"  Fetching processed orders (isShipped: {isShipped}) with EP filter '{config. EPFilter}'...");
+                        orders = GetFilteredProcessedOrders(subSource, Source, sortField, sortDirection, lookBackDays, isShipped, config. EPFilter);
+                    }
 
-                        Logger.WriteDebug($"Attempting to assign order {order.OrderId} to folder '{targetFolder}' (insufficient stock, {reason})");
+                    this.Logger.WriteInfo($"  Orders retrieved: {orders.Count}");
 
-                        try
+                    if (orders.Count == 0)
+                    {
+                        this.Logger. WriteInfo($"  No orders found for {config.NotifyType} - folder: {config.Folder}.  Skipping to next config.");
+                        continue;
+                    }
+
+                    // Log order IDs for debugging
+                    this.Logger. WriteInfo($"  Order IDs found: {string.Join(", ", orders. Select(o => o.NumOrderId))}");
+                }
+                catch (Exception ex)
+                {
+                    this. Logger.WriteError($"  ERROR fetching orders for {config.NotifyType}:  {ex.Message}");
+                    this.Logger.WriteError($"  Stack trace: {ex. StackTrace}");
+                    continue;
+                }
+
+                (StringBuilder Csv, string FileName, Guid[] OrderIds) result;
+
+                try
+                {
+                    this.Logger.WriteInfo($"  Formatting CSV for {config.NotifyType}...");
+
+                    switch (config.NotifyType)
+                    {
+                        case "notifyAcknowledge":
+                            result = FormatnotifyAcknowledge(orders, config. Folder, localFilePath, filetype);
+                            break;
+                        case "notifyOOS": 
+                            result = FormatnotifyOOS(orders, config.Folder, localFilePath, filetype);
+                            break;
+                        case "notifyBIS":
+                            result = FormatnotifyBIS(orders, config.Folder, localFilePath, filetype);
+                            break;
+                        case "notifyShipped":
+                            result = FormatnotifyShipped(orders, config.Folder, localFilePath, filetype);
+                            break;
+                        case "actionCancelled":
+                            result = FormatactionCancelled(orders, config. Folder, localFilePath, filetype);
+                            break;
+                        case "notifyCancelled": 
+                            result = FormatnotifyCancelled(orders, config.Folder, localFilePath, filetype);
+                            break;
+                        default:
+                            this.Logger.WriteError($"  Unknown NotifyType: {config.NotifyType}.  Using default CSV format.");
+                            var csv = GenerateCsv(orders);
+                            var fileName = $"Orders_FAILED_{config. Folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                            SaveCsvLocally(csv, Path.Combine(localFilePath, fileName));
+                            result = (csv, fileName, new Guid[0]);
+                            break;
+                    }
+
+                    this.Logger. WriteInfo($"  CSV formatted successfully. FileName: {result.FileName}");
+                    this. Logger.WriteInfo($"  OrderIds to process after output: {result.OrderIds?. Length ?? 0}");
+                }
+                catch (Exception ex)
+                {
+                    this. Logger.WriteError($"  ERROR formatting CSV for {config.NotifyType}: {ex.Message}");
+                    this.Logger.WriteError($"  Stack trace: {ex.StackTrace}");
+                    continue;
+                }
+
+                string emailSubject;
+                string emailBody;
+                bool outputSuccess = false;
+
+                try
+                {
+                    // Determine output method
+                    if (string.Equals(outputMethod, "FTP", StringComparison.OrdinalIgnoreCase))
+                    {
+                        this.Logger.WriteInfo($"  Output method:  FTP");
+
+                        // Configure SFTP settings for file upload
+                        var sftpSettings = new SFtpSettings
                         {
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, targetFolder);
-                            Logger.WriteInfo($"Order {order.OrderId} has insufficient stock and {reason} - assigned to '{targetFolder}' folder.");
+                            UserName = SFTPUsername,
+                            Password = SFTPPassword,
+                            Server = SFTPServer. StartsWith("sftp://") ? SFTPServer.Substring(7) : SFTPServer,
+                            Port = SFTPPort,
+                            FullPath = $"{SFTPFolderRoot}/{config.Directory}/{result.FileName}"
+                        };
+
+                        this.Logger.WriteInfo($"  SFTP Settings configured:");
+                        this. Logger.WriteInfo($"    Server: {sftpSettings.Server}");
+                        this.Logger. WriteInfo($"    Port: {sftpSettings.Port}");
+                        this.Logger.WriteInfo($"    User: {sftpSettings.UserName}");
+                        this.Logger.WriteInfo($"    FullPath: {sftpSettings.FullPath}");
+
+                        // Upload the CSV to the SFTP server
+                        this.Logger.WriteInfo($"  Attempting SFTP upload...");
+
+                        if (SendByFTP(result. Csv, sftpSettings))
+                        {
+                            this.Logger.WriteInfo($"  SUCCESS: CSV uploaded to SFTP at '{sftpSettings.FullPath}'");
+                            outputSuccess = true;
+
+                            emailSubject = $"SFTP Upload Successful for {config. Folder}";
+                            emailBody = $"The CSV file '{result.FileName}' was successfully uploaded to SFTP at '{sftpSettings.FullPath}'. ";
                         }
-                        catch (Exception folderEx)
+                        else
                         {
-                            Logger.WriteError($"Failed to assign order {order.OrderId} to folder '{targetFolder}': {folderEx.Message}");
-                            Logger.WriteDebug($"Folder assignment error details: {folderEx}");
-                            throw;
-                        }
+                            this.Logger. WriteError($"  FAILED: Could not upload CSV to SFTP at '{sftpSettings.FullPath}'");
 
-                        // Add order note without overwriting existing notes
-                        try
-                        {
-                            var existingNotes = Api.Orders.GetOrderNotes(order. OrderId) ?? new List<OrderNote>();
-                            Logger.WriteDebug($"Found {existingNotes.Count} existing notes for order {order.OrderId}");
-
-                            existingNotes.Add(new OrderNote
-                            {
-                                OrderNoteId = Guid.NewGuid(),
-                                OrderId = order.OrderId,
-                                NoteDate = DateTime.UtcNow,
-                                Internal = false,
-                                Note = "Order has insufficient stock available for all lines.",
-                                CreatedBy = "Rules Engine",
-                                NoteTypeId = null
-                            });
-
-                            Logger.WriteDebug($"Attempting to set {existingNotes.Count} notes for order {order.OrderId}");
-                            Api.Orders. SetOrderNotes(order.OrderId, existingNotes);
-                            Logger.WriteInfo($"Order note added to order {order.OrderId}.");
-                        }
-                        catch (Exception noteEx)
-                        {
-                            Logger. WriteError($"Failed to add note to order {order.OrderId}: {noteEx.Message}");
-                            Logger.WriteDebug($"Note error stack trace: {noteEx. StackTrace}");
+                            emailSubject = $"SFTP Upload Failed for {config.Folder}";
+                            emailBody = $"The CSV file '{result. FileName}' could not be uploaded to SFTP at '{sftpSettings.FullPath}'. Please check the logs for details.";
                         }
                     }
                     else
                     {
-                        string targetFolder = channelUpdatesRequired ? newFolder :  updatedFolder;
-                        string reason = channelUpdatesRequired ?  "requires channel update" : "no channel update required";
+                        this.Logger. WriteInfo($"  Output method: Local");
+                        string fullLocalPath = Path. Combine(localFilePath, result.FileName);
+                        this.Logger.WriteInfo($"  CSV already saved locally at: {fullLocalPath}");
+                        outputSuccess = true;
 
-                        Logger.WriteDebug($"Attempting to assign order {order.OrderId} to folder '{targetFolder}' (sufficient stock, {reason})");
+                        emailSubject = $"Local Save Successful for {config.Folder}";
+                        emailBody = $"The CSV file '{result. FileName}' was successfully saved locally at '{fullLocalPath}'.";
+                    }
 
-                        try
+                    // Only process order updates if output was successful
+                    if (outputSuccess)
+                    {
+                        this.Logger. WriteInfo($"  Output successful - processing order updates for {config.NotifyType}...");
+                        
+                        // Process folder moves
+                        ProcessOrderFolderUpdates(config.NotifyType, result.OrderIds);
+                        
+                        // Set ExtendedProperty to TRUE for processed orders
+                        if (! string.IsNullOrEmpty(config.EPUpdate))
                         {
-                            Api.Orders.AssignToFolder(new List<Guid> { order.OrderId }, targetFolder);
-                            Logger.WriteInfo($"Order {order.OrderId} has sufficient stock and {reason} - assigned to '{targetFolder}' folder.");
+                            SetOrderExtendedProperty(result.OrderIds, config.EPUpdate, "TRUE");
                         }
-                        catch (Exception folderEx)
+                        else
                         {
-                            Logger.WriteError($"Failed to assign order {order.OrderId} to folder '{targetFolder}': {folderEx.Message}");
-                            Logger.WriteDebug($"Folder assignment error details: {folderEx}");
-                            throw;
+                            this.Logger.WriteInfo($"  No ExtendedProperty update configured for {config.NotifyType}");
                         }
-
-                        // Add order note without overwriting existing notes
-                        try
-                        {
-                            var existingNotes = Api.Orders.GetOrderNotes(order.OrderId) ?? new List<OrderNote>();
-                            Logger.WriteDebug($"Found {existingNotes.Count} existing notes for order {order.OrderId}");
-
-                            existingNotes.Add(new OrderNote
-                            {
-                                OrderNoteId = Guid.NewGuid(),
-                                OrderId = order.OrderId,
-                                NoteDate = DateTime. UtcNow,
-                                Internal = false,
-                                Note = "Order updated as stock now available for all lines.",
-                                CreatedBy = "Rules Engine",
-                                NoteTypeId = null
-                            });
-
-                            Logger.WriteDebug($"Attempting to set {existingNotes.Count} notes for order {order.OrderId}");
-                            Api.Orders.SetOrderNotes(order.OrderId, existingNotes);
-                            Logger. WriteInfo($"Order note added to order {order.OrderId}.");
-                        }
-                        catch (Exception noteEx)
-                        {
-                            Logger.WriteError($"Failed to add note to order {order.OrderId}: {noteEx.Message}");
-                            Logger.WriteDebug($"Note error stack trace: {noteEx. StackTrace}");
-                        }
+                    }
+                    else
+                    {
+                        this. Logger.WriteInfo($"  Output failed - skipping order updates for {config.NotifyType}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Logger.WriteError($"Failed to update order {order.OrderId}: {ex.Message}");
-                    Logger.WriteDebug($"Error stack trace: {ex.StackTrace}");
+                    this.Logger.WriteError($"  ERROR during output for {config.NotifyType}: {ex. Message}");
+                    this.Logger. WriteError($"  Stack trace: {ex.StackTrace}");
+                    emailSubject = $"Error Processing {config. Folder}";
+                    emailBody = $"An error occurred while processing {config.NotifyType}:  {ex.Message}";
                 }
+
+                // Send the email
+                try
+                {
+                    this.Logger. WriteInfo($"  Sending notification email.. .");
+                    SendMacroEmail(
+                        new List<Guid> { Guid.Parse("6665d96a-ef96-46bc-a172-291b29785fbe") },
+                        emailSubject,
+                        emailBody
+                    );
+                    this.Logger. WriteInfo($"  Email sent successfully.");
+                }
+                catch (Exception ex)
+                {
+                    this. Logger.WriteError($"  ERROR sending email for {config.NotifyType}: {ex. Message}");
+                    this.Logger. WriteError($"  Stack trace: {ex.StackTrace}");
+                }
+
+                this.Logger. WriteInfo($"  Completed processing {config.NotifyType}");
+            }
+
+            this.Logger. WriteInfo("========================================");
+            this.Logger.WriteInfo($"Macro export complete at: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            this.Logger. WriteInfo("========================================");
+        }
+
+        private void ProcessOrderFolderUpdates(string notifyType, Guid[] orderIds)
+        {
+            this.Logger.WriteInfo($"    ProcessOrderFolderUpdates called for {notifyType}");
+
+            if (orderIds == null || orderIds.Length == 0)
+            {
+                this.Logger.WriteInfo($"    No order IDs to process - skipping folder updates");
+                return;
+            }
+
+            this.Logger.WriteInfo($"    Order IDs to update: {string.Join(", ", orderIds)}");
+
+            var orderIdList = orderIds.ToList();
+
+            try
+            {
+                if (notifyType == "notifyAcknowledge" || notifyType == "notifyBIS")
+                {
+                    this. Logger.WriteInfo($"    Moving {orderIdList.Count} orders to 'Updated' folder.. .");
+                    Api.Orders.AssignToFolder(orderIdList, "Updated");
+                    this.Logger.WriteInfo($"    Successfully moved orders to 'Updated' folder");
+                }
+                else
+                {
+                    this.Logger.WriteInfo($"    No folder move required for {notifyType}");
+                }
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"    ERROR in ProcessOrderFolderUpdates for {notifyType}:  {ex.Message}");
+                this. Logger.WriteError($"    Stack trace:  {ex.StackTrace}");
             }
         }
 
-        private List<OrderDetails> GetOrderDetails(string folderName, bool ignoreUnknownSKUs, Guid locationGuid)
+        /// <summary>
+        /// Sets or updates a single ExtendedProperty on orders while preserving all existing properties. 
+        /// This method gets all existing properties, updates/adds the specified property, then saves them all back.
+        /// </summary>
+        private void SetOrderExtendedProperty(Guid[] orderIds, string propertyName, string propertyValue)
         {
-            List<OrderDetails> orders = new List<OrderDetails>();
+            this. Logger.WriteInfo($"    SetOrderExtendedProperty called");
+            this.Logger.WriteInfo($"    PropertyName: {propertyName}, PropertyValue: {propertyValue}");
 
-            // Filter for folder
-            FieldsFilter filter = new FieldsFilter()
+            if (orderIds == null || orderIds.Length == 0)
             {
-                ListFields = new List<ListFieldFilter>()
+                this.Logger.WriteInfo($"    No order IDs provided - skipping ExtendedProperty update");
+                return;
+            }
+
+            this.Logger.WriteInfo($"    Processing {orderIds.Length} orders for ExtendedProperty update");
+
+            int successCount = 0;
+            int errorCount = 0;
+
+            foreach (var orderId in orderIds)
+            {
+                try
                 {
-                    new ListFieldFilter()
+                    this.Logger.WriteInfo($"      Setting EP '{propertyName}' = '{propertyValue}' for order {orderId}.. .");
+
+                    // Get ALL existing extended properties for this order
+                    var existingProperties = Api.Orders.GetExtendedProperties(orderId);
+                    this.Logger.WriteInfo($"      Retrieved {existingProperties?. Count ??  0} existing properties for order {orderId}");
+
+                    // Log existing properties for debugging
+                    if (existingProperties != null && existingProperties.Count > 0)
                     {
-                        FieldCode = FieldCode.FOLDER,
-                        Value = folderName,
-                        Type = ListFieldFilterType.Is
+                        this.Logger. WriteInfo($"      Existing properties: {string.Join(", ", existingProperties. Select(p => $"{p.Name}={p.Value}"))}");
+                    }
+
+                    // Create a list to hold all properties (existing + updated/new)
+                    var allProperties = new List<ExtendedProperty>();
+
+                    // Find if the property already exists
+                    bool propertyFound = false;
+
+                    if (existingProperties != null)
+                    {
+                        foreach (var prop in existingProperties)
+                        {
+                            if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                // Update this property with the new value
+                                this.Logger.WriteInfo($"      Property '{propertyName}' exists (RowId: {prop. RowId}). Updating value from '{prop.Value}' to '{propertyValue}'.. .");
+                                allProperties.Add(new ExtendedProperty
+                                {
+                                    RowId = prop. RowId,
+                                    Name = prop.Name,
+                                    Value = propertyValue,
+                                    Type = prop.Type ??  "Order"
+                                });
+                                propertyFound = true;
+                            }
+                            else
+                            {
+                                // Keep the existing property unchanged
+                                allProperties.Add(new ExtendedProperty
+                                {
+                                    RowId = prop.RowId,
+                                    Name = prop. Name,
+                                    Value = prop. Value,
+                                    Type = prop. Type ?? "Order"
+                                });
+                            }
+                        }
+                    }
+
+                    // If property doesn't exist, add it as new
+                    if (! propertyFound)
+                    {
+                        this.Logger. WriteInfo($"      Property '{propertyName}' does not exist. Adding new property...");
+                        allProperties.Add(new ExtendedProperty
+                        {
+                            RowId = Guid.Empty,
+                            Name = propertyName,
+                            Value = propertyValue,
+                            Type = "Order"
+                        });
+                    }
+
+                    this.Logger.WriteInfo($"      Saving {allProperties.Count} properties back to order {orderId}...");
+
+                    // Save ALL properties back (this replaces all, but we're passing all of them)
+                    Api.Orders.SetExtendedProperties(orderId, allProperties. ToArray());
+
+                    this.Logger.WriteInfo($"      Successfully updated EP '{propertyName}' for order {orderId} (preserved {allProperties.Count - 1} other properties)");
+                    successCount++;
+                }
+                catch (Exception ex)
+                {
+                    errorCount++;
+                    this.Logger.WriteError($"      ERROR setting EP for order {orderId}:  {ex.Message}");
+                    this.Logger.WriteError($"      Stack trace: {ex. StackTrace}");
+                }
+            }
+
+            this. Logger.WriteInfo($"    SetOrderExtendedProperty completed.  Success: {successCount}, Errors: {errorCount}");
+        }
+
+        private List<OrderDetails> GetFilteredOpenOrdersForAcknowledge(string subSource, string sortField, string sortDirection)
+        {
+            this.Logger.WriteInfo($"      GetFilteredOpenOrdersForAcknowledge started");
+            this.Logger.WriteInfo($"      Parameters - subSource: {subSource}, sortField: {sortField}, sortDirection: {sortDirection}");
+
+            try
+            {
+                // Get ALL open orders filtered by subSource, excluding parked, locked, and unpaid
+                // Note: Status=1 means PAID in Linnworks (0=UNPAID, 1=PAID, 2=RETURN, 3=PENDING, 4=RESEND)
+                // Then filter by statusACK extended property
+                var filter = new FieldsFilter
+                {
+                    NumericFields = new List<NumericFieldFilter>
+                    {
+                        new NumericFieldFilter { FieldCode = FieldCode. GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 1 },
+                        new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_PARKED, Type = NumericFieldFilterType. Equal, Value = 0 },
+                        new NumericFieldFilter { FieldCode = FieldCode. GENERAL_INFO_LOCKED, Type = NumericFieldFilterType.Equal, Value = 0 }
+                    },
+                    TextFields = new List<TextFieldFilter>
+                    {
+                        new TextFieldFilter { FieldCode = FieldCode. GENERAL_INFO_SUBSOURCE, Text = subSource, Type = TextFieldFilterType.Equal }
+                    }
+                };
+
+                this.Logger.WriteInfo($"      Filter configured: Status=1 (PAID), Parked=0, Locked=0, SubSource={subSource}");
+
+                FieldCode sortingCode = sortField. ToUpper() switch
+                {
+                    "ORDERID" => FieldCode.GENERAL_INFO_ORDER_ID,
+                    "REFERENCE" => FieldCode.GENERAL_INFO_REFERENCE_NUMBER,
+                    _ => FieldCode. GENERAL_INFO_ORDER_ID
+                };
+
+                ListSortDirection sortingDirection = sortDirection. ToUpper() == "ASCENDING"
+                    ? ListSortDirection. Ascending
+                    :  ListSortDirection. Descending;
+
+                this.Logger.WriteInfo($"      Sorting by:  {sortingCode}, Direction: {sortingDirection}");
+
+                this.Logger.WriteInfo($"      Calling Api.Orders.GetAllOpenOrders.. .");
+                var guids = Api.Orders. GetAllOpenOrders(filter, new List<FieldSorting>
+                {
+                    new FieldSorting { FieldCode = sortingCode, Direction = sortingDirection, Order = 0 }
+                }, Guid.Empty, "");
+
+                this. Logger.WriteInfo($"      GetAllOpenOrders returned {guids.Count} order GUIDs");
+
+                var orders = new List<OrderDetails>();
+                if (guids.Count > 0)
+                {
+                    this.Logger.WriteInfo($"      Calling Api.Orders.GetOrdersById for {guids. Count} orders...");
+                    orders = Api.Orders. GetOrdersById(guids);
+                    this.Logger. WriteInfo($"      GetOrdersById returned {orders.Count} order details");
+                }
+
+                // Filter out orders where statusACK is TRUE (only include FALSE or not set)
+                int beforeFilterCount = orders.Count;
+                orders = orders.Where(order =>
+                    !order.ExtendedProperties.Any(ep =>
+                        ep. Name == "statusACK" &&
+                        string.Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
+                    )
+                ).ToList();
+
+                this. Logger.WriteInfo($"      EP filter 'statusACK != TRUE':  {beforeFilterCount} -> {orders.Count} orders");
+
+                // Log details of filtered orders
+                if (beforeFilterCount > orders.Count)
+                {
+                    this.Logger.WriteInfo($"      {beforeFilterCount - orders.Count} orders excluded due to statusACK = TRUE");
+                }
+
+                // Sort orders
+                orders = sortingCode == FieldCode. GENERAL_INFO_ORDER_ID
+                    ? (sortingDirection == ListSortDirection.Ascending
+                        ? orders. OrderBy(o => o.NumOrderId).ToList()
+                        : orders.OrderByDescending(o => o.NumOrderId).ToList())
+                    : (sortingDirection == ListSortDirection. Ascending
+                        ?  orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
+                        : orders. OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
+
+                this. Logger.WriteInfo($"      GetFilteredOpenOrdersForAcknowledge completed.  Returning {orders.Count} orders");
+                return orders;
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"      ERROR in GetFilteredOpenOrdersForAcknowledge: {ex. Message}");
+                this.Logger.WriteError($"      Stack trace: {ex. StackTrace}");
+                throw;
+            }
+        }
+
+        private List<OrderDetails> GetFilteredOpenOrders(string subSource, string folderName, string sortField, string sortDirection, string epFilterName)
+        {
+            this.Logger. WriteInfo($"      GetFilteredOpenOrders started");
+            this.Logger.WriteInfo($"      Parameters - subSource: {subSource}, folderName: {folderName}, sortField:  {sortField}, sortDirection: {sortDirection}, epFilterName:  {epFilterName}");
+
+            try
+            {
+                // Note: Status=1 means PAID in Linnworks (0=UNPAID, 1=PAID, 2=RETURN, 3=PENDING, 4=RESEND)
+                var filter = new FieldsFilter
+                {
+                    NumericFields = new List<NumericFieldFilter>
+                    {
+                        new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 1 },
+                        new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_PARKED, Type = NumericFieldFilterType.Equal, Value = 0 },
+                        new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_LOCKED, Type = NumericFieldFilterType.Equal, Value = 0 }
+                    },
+                    ListFields = new List<ListFieldFilter>
+                    {
+                        new ListFieldFilter { FieldCode = FieldCode. FOLDER, Value = folderName, Type = ListFieldFilterType.Is }
+                    },
+                    TextFields = new List<TextFieldFilter>
+                    {
+                        new TextFieldFilter { FieldCode = FieldCode.GENERAL_INFO_SUBSOURCE, Text = subSource, Type = TextFieldFilterType.Equal }
+                    }
+                };
+
+                this.Logger.WriteInfo($"      Filter configured: Status=1 (PAID), Parked=0, Locked=0, Folder={folderName}, SubSource={subSource}");
+
+                FieldCode sortingCode = sortField.ToUpper() switch
+                {
+                    "ORDERID" => FieldCode. GENERAL_INFO_ORDER_ID,
+                    "REFERENCE" => FieldCode.GENERAL_INFO_REFERENCE_NUMBER,
+                    _ => FieldCode. GENERAL_INFO_ORDER_ID
+                };
+
+                ListSortDirection sortingDirection = sortDirection.ToUpper() == "ASCENDING"
+                    ? ListSortDirection.Ascending
+                    : ListSortDirection.Descending;
+
+                this.Logger.WriteInfo($"      Sorting by: {sortingCode}, Direction: {sortingDirection}");
+
+                this.Logger.WriteInfo($"      Calling Api. Orders.GetAllOpenOrders...");
+                var guids = Api.Orders.GetAllOpenOrders(filter, new List<FieldSorting>
+                {
+                    new FieldSorting { FieldCode = sortingCode, Direction = sortingDirection, Order = 0 }
+                }, Guid. Empty, "");
+
+                this.Logger. WriteInfo($"      GetAllOpenOrders returned {guids. Count} order GUIDs");
+
+                var orders = new List<OrderDetails>();
+                if (guids. Count > 0)
+                {
+                    this.Logger. WriteInfo($"      Calling Api.Orders.GetOrdersById for {guids. Count} orders...");
+                    orders = Api.Orders.GetOrdersById(guids);
+                    this.Logger.WriteInfo($"      GetOrdersById returned {orders.Count} order details");
+                }
+
+                // Apply ExtendedProperty filter
+                if (!string.IsNullOrEmpty(epFilterName))
+                {
+                    int beforeFilterCount = orders.Count;
+                    orders = orders. Where(order =>
+                        !order. ExtendedProperties. Any(ep =>
+                            ep.Name == epFilterName &&
+                            string. Equals(ep. Value, "TRUE", StringComparison. OrdinalIgnoreCase)
+                        )
+                    ).ToList();
+
+                    this.Logger. WriteInfo($"      EP filter '{epFilterName} != TRUE': {beforeFilterCount} -> {orders.Count} orders");
+
+                    if (beforeFilterCount > orders.Count)
+                    {
+                        this.Logger. WriteInfo($"      {beforeFilterCount - orders.Count} orders excluded due to {epFilterName} = TRUE");
                     }
                 }
-            };
 
-            // Sorting setup
-            FieldCode sortingCode = FieldCode. GENERAL_INFO_REFERENCE_NUMBER;
-            ListSortDirection sortingDirection = ListSortDirection. Ascending;
+                // Sort orders
+                orders = sortingCode == FieldCode.GENERAL_INFO_ORDER_ID
+                    ? (sortingDirection == ListSortDirection.Ascending
+                        ? orders.OrderBy(o => o.NumOrderId).ToList()
+                        : orders.OrderByDescending(o => o. NumOrderId).ToList())
+                    : (sortingDirection == ListSortDirection.Ascending
+                        ? orders.OrderBy(o => o.GeneralInfo. ReferenceNum).ToList()
+                        : orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
 
-            Logger.WriteInfo("Querying order GUIDs from Linnworks...");
-            List<Guid> guids = Api.Orders.GetAllOpenOrders(filter, new List<FieldSorting>()
+                this.Logger.WriteInfo($"      GetFilteredOpenOrders completed. Returning {orders.Count} orders");
+                return orders;
+            }
+            catch (Exception ex)
             {
-                new FieldSorting()
+                this.Logger.WriteError($"      ERROR in GetFilteredOpenOrders:  {ex.Message}");
+                this. Logger.WriteError($"      Stack trace:  {ex.StackTrace}");
+                throw;
+            }
+        }
+
+        private List<OrderDetails> GetFilteredOpenOrdersNoEPFilter(string subSource, string folderName, string sortField, string sortDirection)
+        {
+            this.Logger. WriteInfo($"      GetFilteredOpenOrdersNoEPFilter started");
+            this.Logger.WriteInfo($"      Parameters - subSource: {subSource}, folderName: {folderName}, sortField: {sortField}, sortDirection: {sortDirection}");
+
+            try
+            {
+                // Note: Status=1 means PAID in Linnworks (0=UNPAID, 1=PAID, 2=RETURN, 3=PENDING, 4=RESEND)
+                var filter = new FieldsFilter
                 {
-                    FieldCode = sortingCode,
-                    Direction = sortingDirection,
-                    Order = 0
-                }
-            }, locationGuid, "");
+                    NumericFields = new List<NumericFieldFilter>
+                    {
+                        new NumericFieldFilter { FieldCode = FieldCode. GENERAL_INFO_STATUS, Type = NumericFieldFilterType.Equal, Value = 1 },
+                        new NumericFieldFilter { FieldCode = FieldCode. GENERAL_INFO_PARKED, Type = NumericFieldFilterType.Equal, Value = 0 },
+                        new NumericFieldFilter { FieldCode = FieldCode.GENERAL_INFO_LOCKED, Type = NumericFieldFilterType.Equal, Value = 0 }
+                    },
+                    ListFields = new List<ListFieldFilter>
+                    {
+                        new ListFieldFilter { FieldCode = FieldCode.FOLDER, Value = folderName, Type = ListFieldFilterType.Is }
+                    },
+                    TextFields = new List<TextFieldFilter>
+                    {
+                        new TextFieldFilter { FieldCode = FieldCode.GENERAL_INFO_SUBSOURCE, Text = subSource, Type = TextFieldFilterType.Equal }
+                    }
+                };
 
-            Logger.WriteInfo($"Order GUIDs returned: {guids.Count}");
+                this.Logger.WriteInfo($"      Filter configured: Status=1 (PAID), Parked=0, Locked=0, Folder={folderName}, SubSource={subSource}");
+                this.Logger.WriteInfo($"      NO ExtendedProperty filter applied for actionCancelled");
 
-            if (guids.Count > 200)
-            {
-                for (int i = 0; i < guids.Count; i += 200)
+                FieldCode sortingCode = sortField.ToUpper() switch
                 {
-                    var batch = guids.Skip(i).Take(200).ToList();
-                    Logger.WriteInfo($"Fetching order details for batch {i / 200 + 1}:  {batch.Count} orders");
-                    orders.AddRange(Api.Orders.GetOrdersById(batch));
-                }
-            }
-            else if (guids.Count <= 200 && guids.Count > 0)
-            {
-                Logger.WriteInfo("Fetching order details for all orders in a single batch.");
-                orders = Api.Orders.GetOrdersById(guids);
-            }
-            else
-            {
-                Logger.WriteInfo("No orders found matching the filter.");
-            }
+                    "ORDERID" => FieldCode.GENERAL_INFO_ORDER_ID,
+                    "REFERENCE" => FieldCode. GENERAL_INFO_REFERENCE_NUMBER,
+                    _ => FieldCode.GENERAL_INFO_ORDER_ID
+                };
 
-            // If enabled, filter the order items which are not present in Linnworks
-            if (ignoreUnknownSKUs)
-            {
-                Logger.WriteInfo("Filtering out orders with unlinked items (unknown SKUs)...");
-                foreach (OrderDetails order in orders)
+                ListSortDirection sortingDirection = sortDirection.ToUpper() == "ASCENDING"
+                    ?  ListSortDirection. Ascending
+                    : ListSortDirection.Descending;
+
+                this.Logger.WriteInfo($"      Sorting by:  {sortingCode}, Direction: {sortingDirection}");
+
+                this.Logger.WriteInfo($"      Calling Api.Orders. GetAllOpenOrders...");
+                var guids = Api. Orders.GetAllOpenOrders(filter, new List<FieldSorting>
                 {
-                    order.Items = order.Items.Where(item => item.ItemId != Guid.Empty && !string.IsNullOrEmpty(item.SKU)).ToList();
+                    new FieldSorting { FieldCode = sortingCode, Direction = sortingDirection, Order = 0 }
+                }, Guid.Empty, "");
+
+                this.Logger.WriteInfo($"      GetAllOpenOrders returned {guids.Count} order GUIDs");
+
+                var orders = new List<OrderDetails>();
+                if (guids.Count > 0)
+                {
+                    this.Logger.WriteInfo($"      Calling Api.Orders.GetOrdersById for {guids.Count} orders...");
+                    orders = Api. Orders.GetOrdersById(guids);
+                    this. Logger.WriteInfo($"      GetOrdersById returned {orders. Count} order details");
                 }
-                // Skip orders which do not have any valid item
-                orders = orders.Where(order => order.Items.Count > 0).ToList();
-                Logger.WriteInfo($"Orders remaining after filtering unknown SKUs: {orders.Count}");
+
+                // Sort orders
+                orders = sortingCode == FieldCode.GENERAL_INFO_ORDER_ID
+                    ?  (sortingDirection == ListSortDirection. Ascending
+                        ? orders.OrderBy(o => o. NumOrderId).ToList()
+                        : orders.OrderByDescending(o => o.NumOrderId).ToList())
+                    : (sortingDirection == ListSortDirection.Ascending
+                        ? orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
+                        : orders.OrderByDescending(o => o. GeneralInfo.ReferenceNum).ToList());
+
+                this.Logger.WriteInfo($"      GetFilteredOpenOrdersNoEPFilter completed.  Returning {orders. Count} orders");
+                return orders;
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"      ERROR in GetFilteredOpenOrdersNoEPFilter: {ex.Message}");
+                this.Logger.WriteError($"      Stack trace: {ex. StackTrace}");
+                throw;
+            }
+        }
+
+        private List<OrderDetails> GetFilteredProcessedOrders(
+            string subSource,
+            string source,
+            string sortField,
+            string sortDirection,
+            int lookBackDays,
+            bool isShipped,
+            string epFilterName
+        )
+        {
+            this.Logger.WriteInfo($"      GetFilteredProcessedOrders started");
+            this.Logger.WriteInfo($"      Parameters - subSource: {subSource}, source: {source}, sortField: {sortField}, sortDirection:  {sortDirection}, lookBackDays: {lookBackDays}, isShipped: {isShipped}, epFilterName: {epFilterName}");
+
+            try
+            {
+                var orders = new List<OrderDetails>();
+                DateTime toDate = DateTime.Today;
+                DateTime fromDate = toDate.AddDays(-lookBackDays);
+
+                this.Logger.WriteInfo($"      Date range: {fromDate:yyyy-MM-dd} to {toDate:yyyy-MM-dd}");
+
+                var searchFilters = new List<SearchFilters>
+                {
+                    new SearchFilters { SearchField = SearchFieldTypes.SubSource, SearchTerm = subSource },
+                    new SearchFilters { SearchField = SearchFieldTypes. Source, SearchTerm = source }
+                };
+
+                var request = new SearchProcessedOrdersRequest
+                {
+                    SearchFilters = searchFilters,
+                    DateField = isShipped ? DateField.processed : DateField.cancelled,
+                    FromDate = fromDate,
+                    ToDate = toDate,
+                    PageNumber = 1,
+                    ResultsPerPage = 200
+                };
+
+                this.Logger.WriteInfo($"      Search request:  DateField={request.DateField}, PageNumber={request.PageNumber}, ResultsPerPage={request.ResultsPerPage}");
+
+                this.Logger.WriteInfo($"      Calling Api.ProcessedOrders.SearchProcessedOrders.. .");
+                var response = Api.ProcessedOrders.SearchProcessedOrders(request);
+
+                this. Logger.WriteInfo($"      SearchProcessedOrders returned {response.ProcessedOrders?. Data?.Count ??  0} processed orders");
+
+                int processedCount = 0;
+                int skippedCompletedCount = 0;
+                int nullOrderCount = 0;
+
+                foreach (var processedOrder in response. ProcessedOrders. Data)
+                {
+                    processedCount++;
+                    this.Logger.WriteInfo($"      Processing order {processedCount}:  pkOrderID={processedOrder. pkOrderID}");
+
+                    var orderDetails = Api.Orders.GetOrderById(processedOrder. pkOrderID);
+                    if (orderDetails != null)
+                    {
+                        if (! orderDetails.FolderName.Contains("Completed"))
+                        {
+                            orders.Add(orderDetails);
+                            this.Logger.WriteInfo($"        Added order {orderDetails.NumOrderId} (Folder: {orderDetails. FolderName})");
+                        }
+                        else
+                        {
+                            skippedCompletedCount++;
+                            this.Logger.WriteInfo($"        Skipped order {orderDetails.NumOrderId} - already in 'Completed' folder");
+                        }
+                    }
+                    else
+                    {
+                        nullOrderCount++;
+                        this.Logger.WriteInfo($"        Skipped order {processedOrder.pkOrderID} - GetOrderById returned null");
+                    }
+                }
+
+                this.Logger.WriteInfo($"      Processing summary: Total={processedCount}, Added={orders.Count}, SkippedCompleted={skippedCompletedCount}, NullOrders={nullOrderCount}");
+
+                // Apply ExtendedProperty filter
+                if (! string.IsNullOrEmpty(epFilterName))
+                {
+                    int beforeFilterCount = orders. Count;
+                    orders = orders.Where(order =>
+                        !order.ExtendedProperties.Any(ep =>
+                            ep.Name == epFilterName &&
+                            string. Equals(ep.Value, "TRUE", StringComparison.OrdinalIgnoreCase)
+                        )
+                    ).ToList();
+
+                    this.Logger.WriteInfo($"      EP filter '{epFilterName} != TRUE': {beforeFilterCount} -> {orders.Count} orders");
+
+                    if (beforeFilterCount > orders.Count)
+                    {
+                        this.Logger.WriteInfo($"      {beforeFilterCount - orders.Count} orders excluded due to {epFilterName} = TRUE");
+                    }
+                }
+
+                // Sorting
+                if (sortField.ToUpper() == "ORDERID")
+                {
+                    orders = sortDirection. ToUpper() == "ASCENDING"
+                        ? orders.OrderBy(o => o.NumOrderId).ToList()
+                        : orders.OrderByDescending(o => o. NumOrderId).ToList();
+                }
+                else
+                {
+                    orders = sortDirection.ToUpper() == "ASCENDING"
+                        ? orders.OrderBy(o => o.GeneralInfo. ReferenceNum).ToList()
+                        : orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList();
+                }
+
+                this.Logger.WriteInfo($"      GetFilteredProcessedOrders completed. Returning {orders.Count} orders");
+                return orders;
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"      ERROR in GetFilteredProcessedOrders: {ex.Message}");
+                this.Logger.WriteError($"      Stack trace: {ex. StackTrace}");
+                throw;
+            }
+        }
+
+        private StringBuilder GenerateCsv(List<OrderDetails> orders)
+        {
+            this.Logger.WriteInfo($"        GenerateCsv called for {orders.Count} orders");
+
+            var csv = new StringBuilder();
+            csv.AppendLine("OrderNumber,CustomerName,Address,Items");
+
+            foreach (var order in orders)
+            {
+                var address = $"{order.CustomerInfo.Address. FullName}, {order.CustomerInfo.Address.Address1}, {order.CustomerInfo.Address.Address2}, {order.CustomerInfo.Address.Town}, {order.CustomerInfo.Address.PostCode}";
+                var items = string.Join(";", order.Items. Select(i => $"{i.SKU} x{i.Quantity}"));
+                csv.AppendLine($"{order. NumOrderId},{order.CustomerInfo.Address.FullName},\"{address}\",\"{items}\"");
             }
 
-            // Final sort
-            List<OrderDetails> sortedOrders;
-            if (sortingDirection == ListSortDirection.Ascending)
-                sortedOrders = orders.OrderBy(order => order.GeneralInfo.ReferenceNum).ToList();
-            else
-                sortedOrders = orders.OrderByDescending(order => order. GeneralInfo.ReferenceNum).ToList();
+            this.Logger.WriteInfo($"        GenerateCsv completed.  CSV has {orders.Count} data rows");
+            return csv;
+        }
 
-            Logger.WriteInfo($"Sorted orders count: {sortedOrders.Count}");
-            return sortedOrders;
+        private bool SendByFTP(StringBuilder report, SFtpSettings sftpSettings)
+        {
+            this.Logger.WriteInfo($"        SendByFTP started");
+            this.Logger.WriteInfo($"        SFTP Settings: Server={sftpSettings.Server}, Port={sftpSettings.Port}, User={sftpSettings.UserName}, Path={sftpSettings. FullPath}");
+
+            try
+            {
+                this.Logger.WriteInfo($"        Getting SFTP upload proxy...");
+                using var upload = this.ProxyFactory?. GetSFtpUploadProxy(sftpSettings);
+
+                if (upload == null)
+                {
+                    this. Logger.WriteError($"        ERROR:  SFTP upload proxy is null");
+                    throw new Exception("SFTP upload proxy is null.");
+                }
+
+                if (report == null)
+                {
+                    this.Logger.WriteError($"        ERROR:  Report content is null");
+                    throw new Exception("Report content is null.");
+                }
+
+                if (sftpSettings == null)
+                {
+                    this. Logger.WriteError($"        ERROR:  SFTP settings is null");
+                    throw new Exception("SFTP settings is null.");
+                }
+
+                this.Logger. WriteInfo($"        Writing content to SFTP stream...");
+                upload.Write(report.ToString());
+
+                this.Logger. WriteInfo($"        Completing upload...");
+                var uploadResult = upload.CompleteUpload();
+
+                if (! uploadResult.IsSuccess)
+                {
+                    this. Logger.WriteError($"        ERROR:  Upload failed - {uploadResult.ErrorMessage}");
+                    throw new ArgumentException(uploadResult.ErrorMessage);
+                }
+
+                this.Logger. WriteInfo($"        SendByFTP completed successfully");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                this.Logger. WriteError($"        ERROR in SendByFTP: {ex. Message}");
+                this.Logger.WriteError($"        Stack trace: {ex. StackTrace}");
+                return false;
+            }
+        }
+
+        private void SaveCsvLocally(StringBuilder csv, string localPath)
+        {
+            this.Logger. WriteInfo($"        SaveCsvLocally called - Path: {localPath}");
+
+            try
+            {
+                File.WriteAllText(localPath, csv. ToString());
+                this.Logger.WriteInfo($"        File saved successfully to:  {localPath}");
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"        ERROR saving file locally: {ex.Message}");
+                this.Logger.WriteError($"        Stack trace: {ex. StackTrace}");
+                throw;
+            }
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyAcknowledge(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            this.Logger. WriteInfo($"        FormatnotifyAcknowledge started for {orders.Count} orders");
+
+            try
+            {
+                // Set the file name and type
+                string fileName = $"Orders_Acknowledge_{DateTime. Now:yyyyMMddHHmmss}_{filetype}.csv";
+                this.Logger.WriteInfo($"        Generated filename: {fileName}");
+
+                // Create the CSV content
+                var csv = new StringBuilder();
+
+                // Set the CSV header
+                csv. AppendLine("Linnworks Order Number,Reference Num,Secondary Ref,External Ref,Primary PO Field,JDE Order Number,Sold To Account,Received Date,Source,Sub Source,Despatch By Date,Number Order Items,Postal Service Name,Total Order Weight,Tracking Number,Item > SKU,Item > ChannelSKU,Item > Description,Item > Quantity,Item > Line Ref,Item > Item Cost (ex VAT),Item > Item Discount (ex VAT),Item > Tax Rate,Item > Weight Per Item");
+
+                // Helper to get ExtendedProperty value by name
+                string GetExtendedProperty(List<ExtendedProperty> props, string name)
+                {
+                    if (props == null) return "";
+                    var prop = props.FirstOrDefault(ep => ep.Name == name);
+                    return prop != null ?  prop.Value : "";
+                }
+
+                // Create an array to record all order GUIDs
+                Guid[] orderIds = orders.Select(order => order.OrderId).ToArray();
+                this.Logger. WriteInfo($"        Collected {orderIds.Length} order IDs for post-processing");
+
+                int lineCount = 0;
+                foreach (var order in orders)
+                {
+                    string primaryPO = GetExtendedProperty(order.ExtendedProperties, "PrimaryPONumber");
+                    string jdeOrderNo = GetExtendedProperty(order.ExtendedProperties, "JDEOrderNo");
+                    string soldTo = GetExtendedProperty(order.ExtendedProperties, "SoldTo");
+
+                    foreach (var item in order.Items)
+                    {
+                        csv.AppendLine($"{order.NumOrderId},{order.GeneralInfo.ReferenceNum},{order.GeneralInfo. SecondaryReference},{order.GeneralInfo.ExternalReferenceNum},{primaryPO},{jdeOrderNo},{soldTo},{order. GeneralInfo.ReceivedDate: yyyy-MM-dd},{order.GeneralInfo.Source},{order.GeneralInfo. SubSource},{order. GeneralInfo.DespatchByDate: yyyy-MM-dd},{order.GeneralInfo.NumItems},{order.ShippingInfo.PostalServiceName},{order.ShippingInfo.TotalWeight},{order.ShippingInfo.TrackingNumber},{item. SKU},{item. ChannelSKU},{item.Title},{item. Quantity},{item.ItemNumber},{item.PricePerUnit},{item. DiscountValue},{item.TaxRate},{item.Weight}");
+                        lineCount++;
+                    }
+                }
+
+                this.Logger.WriteInfo($"        CSV contains {lineCount} item lines from {orders.Count} orders");
+
+                // Save the CSV locally
+                string fullPath = Path. Combine(localFilePath, fileName);
+                SaveCsvLocally(csv, fullPath);
+
+                this.Logger.WriteInfo($"        FormatnotifyAcknowledge completed successfully");
+
+                // Return the CSV, filename, and orderIds array
+                return (csv, fileName, orderIds);
+            }
+            catch (Exception ex)
+            {
+                this.Logger. WriteError($"        ERROR in FormatnotifyAcknowledge: {ex.Message}");
+                this.Logger.WriteError($"        Stack trace: {ex. StackTrace}");
+                throw;
+            }
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyOOS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            this.Logger.WriteInfo($"        FormatnotifyOOS started for {orders. Count} orders");
+
+            try
+            {
+                string fileName = $"Orders_OOS_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                this. Logger.WriteInfo($"        Generated filename:  {fileName}");
+
+                var csv = GenerateCsv(orders);
+
+                string fullPath = Path. Combine(localFilePath, fileName);
+                SaveCsvLocally(csv, fullPath);
+
+                Guid[] orderIds = orders.Select(order => order.OrderId).ToArray();
+                this.Logger. WriteInfo($"        FormatnotifyOOS completed.  OrderIds: {orderIds.Length}");
+
+                return (csv, fileName, orderIds);
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"        ERROR in FormatnotifyOOS: {ex.Message}");
+                this.Logger. WriteError($"        Stack trace: {ex.StackTrace}");
+                throw;
+            }
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyBIS(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            this.Logger.WriteInfo($"        FormatnotifyBIS started for {orders. Count} orders");
+
+            try
+            {
+                string fileName = $"Orders_BIS_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                this.Logger. WriteInfo($"        Generated filename: {fileName}");
+
+                var csv = GenerateCsv(orders);
+
+                string fullPath = Path.Combine(localFilePath, fileName);
+                SaveCsvLocally(csv, fullPath);
+
+                Guid[] orderIds = orders. Select(order => order.OrderId).ToArray();
+                this.Logger.WriteInfo($"        FormatnotifyBIS completed. OrderIds: {orderIds.Length}");
+
+                return (csv, fileName, orderIds);
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"        ERROR in FormatnotifyBIS:  {ex.Message}");
+                this. Logger.WriteError($"        Stack trace:  {ex.StackTrace}");
+                throw;
+            }
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyShipped(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            this.Logger. WriteInfo($"        FormatnotifyShipped started for {orders.Count} orders");
+
+            try
+            {
+                string fileName = $"Orders_Shipped_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                this.Logger.WriteInfo($"        Generated filename: {fileName}");
+
+                var csv = GenerateCsv(orders);
+
+                string fullPath = Path.Combine(localFilePath, fileName);
+                SaveCsvLocally(csv, fullPath);
+
+                Guid[] orderIds = orders.Select(order => order. OrderId).ToArray();
+                this. Logger.WriteInfo($"        FormatnotifyShipped completed.  OrderIds: {orderIds.Length}");
+
+                return (csv, fileName, orderIds);
+            }
+            catch (Exception ex)
+            {
+                this.Logger. WriteError($"        ERROR in FormatnotifyShipped: {ex.Message}");
+                this.Logger.WriteError($"        Stack trace: {ex.StackTrace}");
+                throw;
+            }
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatactionCancelled(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            this.Logger. WriteInfo($"        FormatactionCancelled started for {orders.Count} orders");
+
+            try
+            {
+                // Set the file name for action cancelled orders
+                string fileName = $"Orders_ActionCancelled_{folder}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                this. Logger.WriteInfo($"        Generated filename:  {fileName}");
+
+                // Create the CSV content
+                var csv = new StringBuilder();
+
+                // Set the CSV header for action cancelled orders
+                csv.AppendLine("Linnworks Order Number,Reference Num,Secondary Ref,External Ref,Received Date,Source,Sub Source,Customer Name,Address1,Address2,Town,PostCode,Country,Number Order Items,Item > SKU,Item > ChannelSKU,Item > Description,Item > Quantity");
+
+                // Create an array to record all order GUIDs
+                // Note: actionCancelled does NOT set ExtendedProperty, but we still track OrderIds for consistency
+                Guid[] orderIds = orders. Select(order => order.OrderId).ToArray();
+                this.Logger.WriteInfo($"        Collected {orderIds.Length} order IDs (Note: No EP update for actionCancelled)");
+
+                int lineCount = 0;
+                foreach (var order in orders)
+                {
+                    foreach (var item in order.Items)
+                    {
+                        csv.AppendLine($"{order.NumOrderId},{order. GeneralInfo.ReferenceNum},{order.GeneralInfo. SecondaryReference},{order.GeneralInfo.ExternalReferenceNum},{order. GeneralInfo.ReceivedDate:yyyy-MM-dd},{order.GeneralInfo.Source},{order. GeneralInfo.SubSource},{order.CustomerInfo.Address. FullName},{order.CustomerInfo.Address.Address1},{order.CustomerInfo.Address.Address2},{order.CustomerInfo.Address.Town},{order. CustomerInfo.Address. PostCode},{order. CustomerInfo.Address. Country},{order.GeneralInfo.NumItems},{item.SKU},{item.ChannelSKU},{item. Title},{item. Quantity}");
+                        lineCount++;
+                    }
+                }
+
+                this.Logger. WriteInfo($"        CSV contains {lineCount} item lines from {orders.Count} orders");
+
+                // Save the CSV locally
+                string fullPath = Path.Combine(localFilePath, fileName);
+                SaveCsvLocally(csv, fullPath);
+
+                this.Logger.WriteInfo($"        FormatactionCancelled completed successfully");
+
+                // Return the CSV, filename, and orderIds array
+                return (csv, fileName, orderIds);
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"        ERROR in FormatactionCancelled:  {ex.Message}");
+                this. Logger.WriteError($"        Stack trace:  {ex.StackTrace}");
+                throw;
+            }
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds) FormatnotifyCancelled(List<OrderDetails> orders, string folder, string localFilePath, string filetype)
+        {
+            this. Logger.WriteInfo($"        FormatnotifyCancelled started for {orders.Count} orders");
+
+            try
+            {
+                string fileName = $"Orders_Cancelled_{DateTime.Now:yyyyMMddHHmmss}_{filetype}.csv";
+                this. Logger.WriteInfo($"        Generated filename: {fileName}");
+
+                var csv = GenerateCsv(orders);
+
+                string fullPath = Path.Combine(localFilePath, fileName);
+                SaveCsvLocally(csv, fullPath);
+
+                Guid[] orderIds = orders.Select(order => order.OrderId).ToArray();
+                this.Logger.WriteInfo($"        FormatnotifyCancelled completed. OrderIds: {orderIds.Length}");
+
+                return (csv, fileName, orderIds);
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"        ERROR in FormatnotifyCancelled:  {ex.Message}");
+                this.Logger.WriteError($"        Stack trace: {ex. StackTrace}");
+                throw;
+            }
+        }
+
+        private void SendMacroEmail(List<Guid> recipientIds, string subject, string body, string templateType = null)
+        {
+            this. Logger.WriteInfo($"        SendMacroEmail started");
+            this.Logger.WriteInfo($"        Recipients: {string.Join(",", recipientIds)}");
+            this.Logger.WriteInfo($"        Subject: {subject}");
+            this.Logger.WriteInfo($"        TemplateType: {templateType ??  "null"}");
+
+            try
+            {
+                var emailRequest = new GenerateFreeTextEmailRequest
+                {
+                    ids = recipientIds,
+                    subject = subject,
+                    body = body,
+                    templateType = templateType
+                };
+
+                this.Logger.WriteInfo("        Calling Api. Email.GenerateFreeTextEmail.. .");
+                var emailResponse = Api.Email.GenerateFreeTextEmail(emailRequest);
+
+                if (emailResponse.isComplete)
+                {
+                    this.Logger.WriteInfo("        Email sent successfully!");
+                }
+                else
+                {
+                    this.Logger.WriteError($"        Email failed to send.  Failed recipients: {string.Join(",", emailResponse.FailedRecipients ?? new List<string>())}");
+                }
+            }
+            catch (Exception ex)
+            {
+                this.Logger.WriteError($"        ERROR in SendMacroEmail:  {ex.Message}");
+                this.Logger.WriteError($"        Stack trace: {ex. StackTrace}");
+                throw;
+            }
         }
     }
 }
