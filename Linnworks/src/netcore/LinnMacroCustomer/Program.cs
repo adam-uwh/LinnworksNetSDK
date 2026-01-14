@@ -21,8 +21,8 @@ namespace LinnMacroCustomer
             string Source = "DATAIMPORTEXPORT";
             string subSource = "MultiVery";
             string notifyAcknowledge = "TRUE";
-            string notifyOOS = "FALSE";
-            string notifyBIS = "FALSE";
+            string notifyOOS = "TRUE";
+            string notifyBIS = "TRUE";
             string notifyShipped = "TRUE";
             string actionCancelled = "TRUE";
             string notifyCancelled = "TRUE";
