@@ -46,7 +46,7 @@
 //    - Excludes parked and unpaid orders
 //    - Processes orders that are pending cancellation but not yet cancelled
 //
-// 6. notifyCancelled (Type: Cancelled)
+// 6. notifyCancelled (Type:  Cancelled)
 //    - Returns cancelled orders within lookBackDays
 //    - Filtered by subSource and Source
 //    - Only includes orders where ExtendedProperty 'ChannelUpdatesRequired' is TRUE
@@ -54,10 +54,11 @@
 //    - Excludes orders already in 'Completed' folder
 //    - After processing, sets ExtendedProperty 'StatusCANC' to TRUE
 //
-// OUTPUT:   
+// OUTPUT: 
 // - CSV files are either saved locally (outputMethod = "Local") or uploaded via SFTP (outputMethod = "FTP")
 // - Email notifications are sent after each file operation
 // - ALL CSV files now use the same standardized format with identical headers
+// - Filenames are prefixed with subSource:  {subSource}_Orders_{type}_{timestamp}_{filetype}.csv
 //
 // FILTERS APPLIED TO ALL OPEN ORDERS:
 // - Status = 1 (Paid - Note: In Linnworks, Status 0=UNPAID, 1=PAID, so filtering Status=1 ensures only paid orders)
@@ -78,7 +79,7 @@
 // - Source:  The order source channel
 // - subSource: The order sub-source for filtering
 // - notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, actionCancelled, notifyCancelled: TRUE/FALSE flags
-// - newFolder, oosFolder, bisFolder, cancelFolder: Folder names for different order states
+// - newFolder, oosFolder, bisFolder, cancelFolder:  Folder names for different order states
 // - outputMethod: "Local" or "FTP" - determines where CSV files are saved
 // - SFTP*:  SFTP connection parameters (used when outputMethod = "FTP")
 // - *Directory:  SFTP directory paths for each notification type
@@ -100,7 +101,6 @@ namespace LinnworksMacro
 {
     public class LinnworksMacro :  LinnworksMacroHelpers.LinnworksMacroBase
     {
-        // Standardized CSV header used by all notification types
         private const string StandardCsvHeader = "Linnworks Order Number,Reference Num,Secondary Ref,External Ref,Primary PO Field,JDE Order Number,Sold To Account,Received Date,Source,Sub Source,Despatch By Date,Number Order Items,Postal Service Name,Total Order Weight,Tracking Number,Item > SKU,Item > ChannelSKU,Item > Description,Item > Quantity,Item > Line Ref,Item > Item Cost (ex VAT),Item > Item Discount (ex VAT),Item > Tax Rate,Item > Weight Per Item";
 
         public void Execute(
@@ -140,7 +140,6 @@ namespace LinnworksMacro
             this.Logger.WriteInfo("========================================");
             this.Logger.WriteInfo($"Execution started at:  {DateTime.Now:yyyy-MM-dd HH: mm:ss}");
             
-            // Log all input parameters for debugging
             this.Logger.WriteInfo("--- Input Parameters ---");
             this.Logger.WriteInfo($"Source: {Source}");
             this.Logger.WriteInfo($"subSource: {subSource}");
@@ -148,17 +147,17 @@ namespace LinnworksMacro
             this.Logger.WriteInfo($"notifyOOS: {notifyOOS}");
             this.Logger.WriteInfo($"notifyBIS: {notifyBIS}");
             this.Logger.WriteInfo($"notifyShipped: {notifyShipped}");
-            this.Logger. WriteInfo($"actionCancelled: {actionCancelled}");
-            this.Logger.WriteInfo($"notifyCancelled:  {notifyCancelled}");
+            this.Logger.WriteInfo($"actionCancelled:  {actionCancelled}");
+            this.Logger.WriteInfo($"notifyCancelled: {notifyCancelled}");
             this.Logger.WriteInfo($"newFolder: {newFolder}");
-            this.Logger. WriteInfo($"oosFolder:  {oosFolder}");
+            this.Logger.WriteInfo($"oosFolder: {oosFolder}");
             this.Logger.WriteInfo($"bisFolder: {bisFolder}");
             this.Logger.WriteInfo($"cancelFolder: {cancelFolder}");
-            this.Logger. WriteInfo($"outputMethod: {outputMethod}");
+            this.Logger.WriteInfo($"outputMethod: {outputMethod}");
             this.Logger.WriteInfo($"localFilePath: {localFilePath}");
             this.Logger.WriteInfo($"sortField: {sortField}");
             this.Logger.WriteInfo($"sortDirection: {sortDirection}");
-            this.Logger.WriteInfo($"lookBackDays: {lookBackDays}");
+            this.Logger.WriteInfo($"lookBackDays:  {lookBackDays}");
             this.Logger.WriteInfo($"SFTPServer: {SFTPServer}");
             this.Logger.WriteInfo($"SFTPPort: {SFTPPort}");
             this.Logger.WriteInfo($"SFTPFolderRoot: {SFTPFolderRoot}");
@@ -196,7 +195,7 @@ namespace LinnworksMacro
                     continue;
                 }
 
-                this.Logger.WriteInfo($"  Processing {config.NotifyType}...");
+                this.Logger.WriteInfo($"  Processing {config.NotifyType}.. .");
 
                 List<OrderDetails> orders = new List<OrderDetails>();
 
@@ -209,8 +208,8 @@ namespace LinnworksMacro
                     }
                     else if (config.Type == "Open")
                     {
-                        this.Logger.WriteInfo($"  Fetching open orders from folder '{config.Folder}' with ChannelUpdatesRequired=TRUE and EP filter '{config.EPFilter}'.. .");
-                        orders = GetFilteredOpenOrders(subSource, config. Folder, sortField, sortDirection, config.EPFilter);
+                        this.Logger.WriteInfo($"  Fetching open orders from folder '{config.Folder}' with ChannelUpdatesRequired=TRUE and EP filter '{config.EPFilter}'...");
+                        orders = GetFilteredOpenOrders(subSource, config.Folder, sortField, sortDirection, config.EPFilter);
                     }
                     else if (config.Type == "OpenNoEPFilter")
                     {
@@ -232,7 +231,7 @@ namespace LinnworksMacro
                         continue;
                     }
 
-                    this.Logger.WriteInfo($"  Order IDs found: {string.Join(", ", orders.Select(o => o.NumOrderId))}");
+                    this.Logger.WriteInfo($"  Order IDs found: {string.Join(", ", orders.Select(o => o. NumOrderId))}");
                 }
                 catch (Exception ex)
                 {
@@ -250,32 +249,32 @@ namespace LinnworksMacro
                     switch (config.NotifyType)
                     {
                         case "notifyAcknowledge":
-                            result = FormatStandardCsv(orders, "Acknowledge", localFilePath, filetype, newFolder);
+                            result = FormatStandardCsv(orders, "Acknowledge", localFilePath, filetype, subSource, newFolder);
                             break;
                         case "notifyOOS": 
-                            var oosResult = FormatStandardCsv(orders, $"OOS_{config.Folder}", localFilePath, filetype, null);
+                            var oosResult = FormatStandardCsv(orders, "OOS", localFilePath, filetype, subSource, null);
                             result = (oosResult.Csv, oosResult.FileName, oosResult.OrderIds, new Guid[0]);
                             break;
                         case "notifyBIS":
-                            var bisResult = FormatStandardCsv(orders, $"BIS_{config.Folder}", localFilePath, filetype, null);
+                            var bisResult = FormatStandardCsv(orders, "BIS", localFilePath, filetype, subSource, null);
                             result = (bisResult.Csv, bisResult.FileName, bisResult.OrderIds, new Guid[0]);
                             break;
-                        case "notifyShipped": 
-                            var shippedResult = FormatStandardCsv(orders, "Shipped", localFilePath, filetype, null);
-                            result = (shippedResult. Csv, shippedResult. FileName, shippedResult.OrderIds, new Guid[0]);
+                        case "notifyShipped":
+                            var shippedResult = FormatStandardCsv(orders, "Shipped", localFilePath, filetype, subSource, null);
+                            result = (shippedResult.Csv, shippedResult.FileName, shippedResult.OrderIds, new Guid[0]);
                             break;
-                        case "actionCancelled": 
-                            var actionResult = FormatStandardCsv(orders, $"ActionCancelled_{config.Folder}", localFilePath, filetype, null);
+                        case "actionCancelled":
+                            var actionResult = FormatStandardCsv(orders, "ActionCancelled", localFilePath, filetype, subSource, null);
                             result = (actionResult.Csv, actionResult.FileName, actionResult.OrderIds, new Guid[0]);
                             break;
-                        case "notifyCancelled": 
-                            var cancelResult = FormatStandardCsv(orders, "Cancelled", localFilePath, filetype, null);
+                        case "notifyCancelled":
+                            var cancelResult = FormatStandardCsv(orders, "Cancelled", localFilePath, filetype, subSource, null);
                             result = (cancelResult.Csv, cancelResult.FileName, cancelResult.OrderIds, new Guid[0]);
                             break;
                         default:
                             this.Logger.WriteError($"  Unknown NotifyType: {config.NotifyType}.  Using default CSV format.");
-                            var defaultResult = FormatStandardCsv(orders, $"FAILED_{config.Folder}", localFilePath, filetype, null);
-                            result = (defaultResult. Csv, defaultResult.FileName, defaultResult.OrderIds, new Guid[0]);
+                            var defaultResult = FormatStandardCsv(orders, "FAILED", localFilePath, filetype, subSource, null);
+                            result = (defaultResult.Csv, defaultResult.FileName, defaultResult.OrderIds, new Guid[0]);
                             break;
                     }
 
@@ -288,8 +287,8 @@ namespace LinnworksMacro
                 }
                 catch (Exception ex)
                 {
-                    this.Logger.WriteError($"  ERROR formatting CSV for {config.NotifyType}: {ex.Message}");
-                    this.Logger. WriteError($"  Stack trace:  {ex.StackTrace}");
+                    this.Logger. WriteError($"  ERROR formatting CSV for {config.NotifyType}:  {ex.Message}");
+                    this.Logger.WriteError($"  Stack trace: {ex. StackTrace}");
                     continue;
                 }
 
@@ -320,9 +319,9 @@ namespace LinnworksMacro
 
                         this.Logger.WriteInfo($"  Attempting SFTP upload...");
 
-                        if (SendByFTP(result. Csv, sftpSettings))
+                        if (SendByFTP(result.Csv, sftpSettings))
                         {
-                            this. Logger.WriteInfo($"  SUCCESS: CSV uploaded to SFTP at '{sftpSettings.FullPath}'");
+                            this.Logger.WriteInfo($"  SUCCESS: CSV uploaded to SFTP at '{sftpSettings.FullPath}'");
                             outputSuccess = true;
                             emailSubject = $"SFTP Upload Successful for {config. Folder}";
                             emailBody = $"The CSV file '{result.FileName}' was successfully uploaded to SFTP at '{sftpSettings.FullPath}'. ";
@@ -341,27 +340,25 @@ namespace LinnworksMacro
                         this.Logger.WriteInfo($"  CSV already saved locally at: {fullLocalPath}");
                         outputSuccess = true;
                         emailSubject = $"Local Save Successful for {config.Folder}";
-                        emailBody = $"The CSV file '{result. FileName}' was successfully saved locally at '{fullLocalPath}'.";
+                        emailBody = $"The CSV file '{result. FileName}' was successfully saved locally at '{fullLocalPath}'. ";
                     }
 
                     if (outputSuccess)
                     {
                         this. Logger.WriteInfo($"  Output successful - processing order updates for {config.NotifyType}...");
                         
-                        // Process folder moves - pass NewFolderOrderIds for notifyAcknowledge
                         if (config.NotifyType == "notifyAcknowledge")
                         {
                             ProcessOrderFolderUpdates(config.NotifyType, result.NewFolderOrderIds);
                         }
                         else
                         {
-                            ProcessOrderFolderUpdates(config.NotifyType, result.OrderIds);
+                            ProcessOrderFolderUpdates(config. NotifyType, result.OrderIds);
                         }
                         
-                        // Set ExtendedProperty to TRUE for ALL processed orders
                         if (! string.IsNullOrEmpty(config.EPUpdate))
                         {
-                            SetOrderExtendedProperty(result.OrderIds, config.EPUpdate, "TRUE");
+                            SetOrderExtendedProperty(result.OrderIds, config. EPUpdate, "TRUE");
                         }
                         else
                         {
@@ -401,7 +398,7 @@ namespace LinnworksMacro
             }
 
             this.Logger.WriteInfo("========================================");
-            this.Logger. WriteInfo($"Macro export complete at:  {DateTime.Now:yyyy-MM-dd HH: mm:ss}");
+            this.Logger.WriteInfo($"Macro export complete at:  {DateTime.Now:yyyy-MM-dd HH: mm:ss}");
             this.Logger.WriteInfo("========================================");
         }
 
@@ -423,7 +420,7 @@ namespace LinnworksMacro
             {
                 if (notifyType == "notifyAcknowledge" || notifyType == "notifyBIS")
                 {
-                    this.Logger.WriteInfo($"    Moving {orderIdList.Count} orders to 'Updated' folder...");
+                    this.Logger.WriteInfo($"    Moving {orderIdList.Count} orders to 'Updated' folder.. .");
                     Api.Orders.AssignToFolder(orderIdList, "Updated");
                     this.Logger.WriteInfo($"    Successfully moved orders to 'Updated' folder");
                 }
@@ -434,7 +431,6 @@ namespace LinnworksMacro
                     {
                         try
                         {
-                            // Cancel the order with a cancellation reason
                             Api.Orders.CancelOrder(orderId, Guid.Empty, 0, "Cancelled via actionCancelled macro");
                             this.Logger. WriteInfo($"      Successfully cancelled order {orderId}");
                         }
@@ -447,7 +443,7 @@ namespace LinnworksMacro
                 }
                 else
                 {
-                    this.Logger.WriteInfo($"    No folder move required for {notifyType}");
+                    this.Logger. WriteInfo($"    No folder move required for {notifyType}");
                 }
             }
             catch (Exception ex)
@@ -477,14 +473,14 @@ namespace LinnworksMacro
             {
                 try
                 {
-                    this.Logger. WriteInfo($"      Setting EP '{propertyName}' = '{propertyValue}' for order {orderId}.. .");
+                    this.Logger.WriteInfo($"      Setting EP '{propertyName}' = '{propertyValue}' for order {orderId}.. .");
 
                     var existingProperties = Api.Orders.GetExtendedProperties(orderId);
                     this.Logger.WriteInfo($"      Retrieved {existingProperties?. Count ??  0} existing properties for order {orderId}");
 
                     if (existingProperties != null && existingProperties.Count > 0)
                     {
-                        this.Logger.WriteInfo($"      Existing properties: {string.Join(", ", existingProperties.Select(p => $"{p.Name}={p.Value}"))}");
+                        this.Logger.WriteInfo($"      Existing properties:  {string.Join(", ", existingProperties.Select(p => $"{p.Name}={p.Value}"))}");
                     }
 
                     var allProperties = new List<ExtendedProperty>();
@@ -496,7 +492,7 @@ namespace LinnworksMacro
                         {
                             if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
                             {
-                                this.Logger.WriteInfo($"      Property '{propertyName}' exists (RowId: {prop.RowId}). Updating value from '{prop.Value}' to '{propertyValue}'...");
+                                this.Logger.WriteInfo($"      Property '{propertyName}' exists (RowId: {prop.RowId}). Updating value from '{prop.Value}' to '{propertyValue}'.. .");
                                 allProperties.Add(new ExtendedProperty
                                 {
                                     RowId = prop.RowId,
@@ -519,9 +515,9 @@ namespace LinnworksMacro
                         }
                     }
 
-                    if (!propertyFound)
+                    if (! propertyFound)
                     {
-                        this.Logger. WriteInfo($"      Property '{propertyName}' does not exist. Adding new property...");
+                        this.Logger.WriteInfo($"      Property '{propertyName}' does not exist. Adding new property...");
                         allProperties.Add(new ExtendedProperty
                         {
                             RowId = Guid.Empty,
@@ -545,7 +541,7 @@ namespace LinnworksMacro
                 }
             }
 
-            this.Logger. WriteInfo($"    SetOrderExtendedProperty completed. Success: {successCount}, Errors: {errorCount}");
+            this.Logger. WriteInfo($"    SetOrderExtendedProperty completed.  Success:  {successCount}, Errors: {errorCount}");
         }
 
         private bool HasChannelUpdatesRequired(OrderDetails order)
@@ -553,7 +549,7 @@ namespace LinnworksMacro
             if (order. ExtendedProperties == null)
                 return false;
 
-            var channelUpdatesProp = order.ExtendedProperties.FirstOrDefault(ep =>
+            var channelUpdatesProp = order.ExtendedProperties. FirstOrDefault(ep =>
                 string.Equals(ep.Name, "ChannelUpdatesRequired", StringComparison.OrdinalIgnoreCase));
 
             if (channelUpdatesProp == null)
@@ -621,47 +617,36 @@ namespace LinnworksMacro
                 this.Logger.WriteInfo($"      GetAllOpenOrders returned {guids.Count} order GUIDs");
 
                 var orders = new List<OrderDetails>();
-                if (guids.Count > 0)
+                if (guids. Count > 0)
                 {
                     this.Logger.WriteInfo($"      Calling Api.Orders.GetOrdersById for {guids.Count} orders.. .");
                     orders = Api. Orders.GetOrdersById(guids);
                     this.Logger.WriteInfo($"      GetOrdersById returned {orders.Count} order details");
                 }
 
-                // FILTER 1: Only include orders where ChannelUpdatesRequired is TRUE
                 int beforeChannelFilter = orders.Count;
                 orders = orders.Where(order => HasChannelUpdatesRequired(order)).ToList();
                 this.Logger.WriteInfo($"      EP filter 'ChannelUpdatesRequired = TRUE':  {beforeChannelFilter} -> {orders.Count} orders");
-                if (beforeChannelFilter > orders.Count)
-                {
-                    this.Logger.WriteInfo($"      {beforeChannelFilter - orders.Count} orders excluded due to ChannelUpdatesRequired not being TRUE");
-                }
 
-                // FILTER 2: Exclude orders where statusACK is TRUE (only include FALSE or not set)
                 int beforeStatusFilter = orders.Count;
                 orders = orders.Where(order => ! HasStatusEPSetToTrue(order, "statusACK")).ToList();
-                this.Logger. WriteInfo($"      EP filter 'statusACK != TRUE': {beforeStatusFilter} -> {orders.Count} orders");
-                if (beforeStatusFilter > orders.Count)
-                {
-                    this.Logger.WriteInfo($"      {beforeStatusFilter - orders.Count} orders excluded due to statusACK = TRUE");
-                }
+                this. Logger.WriteInfo($"      EP filter 'statusACK != TRUE': {beforeStatusFilter} -> {orders.Count} orders");
 
-                // Sort orders
                 orders = sortingCode == FieldCode.GENERAL_INFO_ORDER_ID
-                    ? (sortingDirection == ListSortDirection.Ascending
-                        ? orders.OrderBy(o => o. NumOrderId).ToList()
-                        :  orders.OrderByDescending(o => o.NumOrderId).ToList())
+                    ?  (sortingDirection == ListSortDirection. Ascending
+                        ? orders.OrderBy(o => o.NumOrderId).ToList()
+                        : orders.OrderByDescending(o => o.NumOrderId).ToList())
                     : (sortingDirection == ListSortDirection.Ascending
                         ? orders.OrderBy(o => o. GeneralInfo.ReferenceNum).ToList()
-                        :  orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
+                        : orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
 
-                this.Logger.WriteInfo($"      GetFilteredOpenOrdersForAcknowledge completed.  Returning {orders.Count} orders");
+                this.Logger. WriteInfo($"      GetFilteredOpenOrdersForAcknowledge completed.  Returning {orders.Count} orders");
                 return orders;
             }
             catch (Exception ex)
             {
-                this.Logger.WriteError($"      ERROR in GetFilteredOpenOrdersForAcknowledge: {ex.Message}");
-                this.Logger. WriteError($"      Stack trace:  {ex.StackTrace}");
+                this.Logger.WriteError($"      ERROR in GetFilteredOpenOrdersForAcknowledge: {ex. Message}");
+                this.Logger.WriteError($"      Stack trace: {ex.StackTrace}");
                 throw;
             }
         }
@@ -691,7 +676,7 @@ namespace LinnworksMacro
                     }
                 };
 
-                this. Logger.WriteInfo($"      Filter configured: Status=1 (PAID), Parked=0, Locked=0, Folder={folderName}, SubSource={subSource}");
+                this.Logger.WriteInfo($"      Filter configured: Status=1 (PAID), Parked=0, Locked=0, Folder={folderName}, SubSource={subSource}");
 
                 FieldCode sortingCode = sortField.ToUpper() switch
                 {
@@ -722,28 +707,17 @@ namespace LinnworksMacro
                     this.Logger.WriteInfo($"      GetOrdersById returned {orders.Count} order details");
                 }
 
-                // FILTER 1: Only include orders where ChannelUpdatesRequired is TRUE
-                int beforeChannelFilter = orders.Count;
-                orders = orders.Where(order => HasChannelUpdatesRequired(order)).ToList();
-                this. Logger.WriteInfo($"      EP filter 'ChannelUpdatesRequired = TRUE': {beforeChannelFilter} -> {orders.Count} orders");
-                if (beforeChannelFilter > orders.Count)
-                {
-                    this.Logger.WriteInfo($"      {beforeChannelFilter - orders.Count} orders excluded due to ChannelUpdatesRequired not being TRUE");
-                }
+                int beforeChannelFilter = orders. Count;
+                orders = orders. Where(order => HasChannelUpdatesRequired(order)).ToList();
+                this.Logger.WriteInfo($"      EP filter 'ChannelUpdatesRequired = TRUE':  {beforeChannelFilter} -> {orders.Count} orders");
 
-                // FILTER 2: Apply status ExtendedProperty filter (exclude if TRUE)
                 if (! string.IsNullOrEmpty(epFilterName))
                 {
                     int beforeStatusFilter = orders.Count;
                     orders = orders.Where(order => !HasStatusEPSetToTrue(order, epFilterName)).ToList();
                     this.Logger.WriteInfo($"      EP filter '{epFilterName} != TRUE': {beforeStatusFilter} -> {orders.Count} orders");
-                    if (beforeStatusFilter > orders.Count)
-                    {
-                        this.Logger. WriteInfo($"      {beforeStatusFilter - orders.Count} orders excluded due to {epFilterName} = TRUE");
-                    }
                 }
 
-                // Sort orders
                 orders = sortingCode == FieldCode. GENERAL_INFO_ORDER_ID
                     ? (sortingDirection == ListSortDirection.Ascending
                         ? orders.OrderBy(o => o.NumOrderId).ToList()
@@ -752,7 +726,7 @@ namespace LinnworksMacro
                         ? orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
                         : orders. OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
 
-                this.Logger.WriteInfo($"      GetFilteredOpenOrders completed. Returning {orders. Count} orders");
+                this.Logger.WriteInfo($"      GetFilteredOpenOrders completed.  Returning {orders.Count} orders");
                 return orders;
             }
             catch (Exception ex)
@@ -820,47 +794,35 @@ namespace LinnworksMacro
                     this.Logger.WriteInfo($"      GetOrdersById returned {orders.Count} order details");
                 }
 
-                // NO EP filters for actionCancelled - return all orders from the folder
-
-                // Sort orders
                 orders = sortingCode == FieldCode.GENERAL_INFO_ORDER_ID
-                    ? (sortingDirection == ListSortDirection.Ascending
+                    ? (sortingDirection == ListSortDirection. Ascending
                         ? orders.OrderBy(o => o.NumOrderId).ToList()
-                        : orders. OrderByDescending(o => o.NumOrderId).ToList())
+                        : orders.OrderByDescending(o => o.NumOrderId).ToList())
                     : (sortingDirection == ListSortDirection.Ascending
-                        ? orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
-                        : orders.OrderByDescending(o => o. GeneralInfo.ReferenceNum).ToList());
+                        ? orders.OrderBy(o => o. GeneralInfo.ReferenceNum).ToList()
+                        :  orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList());
 
-                this. Logger.WriteInfo($"      GetFilteredOpenOrdersNoEPFilter completed. Returning {orders. Count} orders");
+                this.Logger.WriteInfo($"      GetFilteredOpenOrdersNoEPFilter completed. Returning {orders.Count} orders");
                 return orders;
             }
             catch (Exception ex)
             {
                 this.Logger.WriteError($"      ERROR in GetFilteredOpenOrdersNoEPFilter: {ex.Message}");
-                this. Logger.WriteError($"      Stack trace: {ex.StackTrace}");
+                this.Logger.WriteError($"      Stack trace: {ex. StackTrace}");
                 throw;
             }
         }
 
-        private List<OrderDetails> GetFilteredProcessedOrders(
-            string subSource,
-            string source,
-            string sortField,
-            string sortDirection,
-            int lookBackDays,
-            bool isShipped,
-            string epFilterName
-        )
+        private List<OrderDetails> GetFilteredProcessedOrders(string subSource, string source, string sortField, string sortDirection, int lookBackDays, bool isShipped, string epFilterName)
         {
             this.Logger.WriteInfo($"      GetFilteredProcessedOrders started");
-            this.Logger.WriteInfo($"      Parameters - subSource: {subSource}, source: {source}, sortField: {sortField}, sortDirection: {sortDirection}, lookBackDays: {lookBackDays}, isShipped: {isShipped}, epFilterName: {epFilterName}");
+            this.Logger.WriteInfo($"      Parameters - subSource: {subSource}, source: {source}, sortField:  {sortField}, sortDirection: {sortDirection}, lookBackDays:  {lookBackDays}, isShipped: {isShipped}, epFilterName: {epFilterName}");
 
             try
             {
                 var orders = new List<OrderDetails>();
                 
-                // Use DateTime. UtcNow to ensure consistent timezone handling
-                DateTime toDate = DateTime.UtcNow. Date. AddDays(1); // Include all of today
+                DateTime toDate = DateTime. UtcNow.Date.AddDays(1);
                 DateTime fromDate = DateTime.UtcNow.Date.AddDays(-lookBackDays);
 
                 this.Logger.WriteInfo($"      Date range: {fromDate: yyyy-MM-ddTHH:mm:ss. fffZ} to {toDate: yyyy-MM-ddTHH:mm:ss.fffZ}");
@@ -871,7 +833,6 @@ namespace LinnworksMacro
                     new SearchFilters { SearchField = SearchFieldTypes.Source, SearchTerm = source }
                 };
 
-                // Log the search filters for debugging
                 this.Logger.WriteInfo($"      SearchFilters:");
                 foreach (var filter in searchFilters)
                 {
@@ -880,7 +841,7 @@ namespace LinnworksMacro
 
                 var request = new SearchProcessedOrdersRequest
                 {
-                    SearchTerm = "", // Explicitly set to empty string instead of null
+                    SearchTerm = "",
                     SearchFilters = searchFilters,
                     DateField = isShipped ? DateField.processed : DateField.cancelled,
                     FromDate = fromDate,
@@ -889,9 +850,8 @@ namespace LinnworksMacro
                     ResultsPerPage = 200
                 };
 
-                this.Logger. WriteInfo($"      Search request:  DateField={request.DateField}, FromDate={request.FromDate:yyyy-MM-ddTHH:mm:ss}, ToDate={request.ToDate:yyyy-MM-ddTHH:mm:ss}, PageNumber={request.PageNumber}, ResultsPerPage={request.ResultsPerPage}");
+                this.Logger. WriteInfo($"      Search request:  DateField={request.DateField}, FromDate={request.FromDate:yyyy-MM-ddTHH: mm:ss}, ToDate={request.ToDate:yyyy-MM-ddTHH:mm:ss}, PageNumber={request.PageNumber}, ResultsPerPage={request.ResultsPerPage}");
                 
-                // Log the serialized request for debugging (to compare with Postman)
                 try
                 {
                     var serializedRequest = Newtonsoft.Json.JsonConvert.SerializeObject(request);
@@ -899,20 +859,19 @@ namespace LinnworksMacro
                 }
                 catch (Exception serEx)
                 {
-                    this. Logger.WriteInfo($"      Could not serialize request for logging: {serEx.Message}");
+                    this.Logger.WriteInfo($"      Could not serialize request for logging: {serEx.Message}");
                 }
 
-                this.Logger.WriteInfo($"      Calling Api.ProcessedOrders. SearchProcessedOrders.. .");
+                this.Logger.WriteInfo($"      Calling Api.ProcessedOrders.SearchProcessedOrders...");
                 var response = Api.ProcessedOrders.SearchProcessedOrders(request);
 
-                this.Logger.WriteInfo($"      SearchProcessedOrders returned {response.ProcessedOrders?. Data?. Count ??  0} processed orders");
+                this.Logger.WriteInfo($"      SearchProcessedOrders returned {response. ProcessedOrders?. Data?.Count ??  0} processed orders");
 
-                // Log response details for debugging - using correct property names from GenericPagedResult<T>
-                if (response.ProcessedOrders != null)
+                if (response. ProcessedOrders != null)
                 {
                     this.Logger.WriteInfo($"      Response TotalEntries: {response.ProcessedOrders.TotalEntries}");
                     this.Logger.WriteInfo($"      Response TotalPages: {response.ProcessedOrders.TotalPages}");
-                    this.Logger.WriteInfo($"      Response PageNumber: {response.ProcessedOrders.PageNumber}");
+                    this.Logger.WriteInfo($"      Response PageNumber:  {response.ProcessedOrders. PageNumber}");
                     this.Logger.WriteInfo($"      Response EntriesPerPage: {response. ProcessedOrders.EntriesPerPage}");
                 }
 
@@ -933,7 +892,7 @@ namespace LinnworksMacro
                             if (orderDetails.FolderName == null || ! orderDetails.FolderName. Contains("Completed"))
                             {
                                 orders.Add(orderDetails);
-                                this.Logger.WriteInfo($"        Added order {orderDetails.NumOrderId} (Folder: {string.Join(", ", orderDetails. FolderName ??  new List<string>())})");
+                                this.Logger.WriteInfo($"        Added order {orderDetails.NumOrderId} (Folder: {string.Join(", ", orderDetails.FolderName ?? new List<string>())})");
                             }
                             else
                             {
@@ -951,55 +910,41 @@ namespace LinnworksMacro
 
                 this.Logger.WriteInfo($"      Processing summary: Total={processedCount}, Added={orders.Count}, SkippedCompleted={skippedCompletedCount}, NullOrders={nullOrderCount}");
 
-                // FILTER 1: Only include orders where ChannelUpdatesRequired is TRUE
                 int beforeChannelFilter = orders.Count;
                 orders = orders.Where(order => HasChannelUpdatesRequired(order)).ToList();
-                this.Logger.WriteInfo($"      EP filter 'ChannelUpdatesRequired = TRUE':  {beforeChannelFilter} -> {orders.Count} orders");
-                if (beforeChannelFilter > orders.Count)
-                {
-                    this.Logger.WriteInfo($"      {beforeChannelFilter - orders.Count} orders excluded due to ChannelUpdatesRequired not being TRUE");
-                }
+                this.Logger.WriteInfo($"      EP filter 'ChannelUpdatesRequired = TRUE': {beforeChannelFilter} -> {orders. Count} orders");
 
-                // FILTER 2: Apply status ExtendedProperty filter (exclude if TRUE)
-                if (!string.IsNullOrEmpty(epFilterName))
+                if (! string.IsNullOrEmpty(epFilterName))
                 {
                     int beforeStatusFilter = orders.Count;
                     orders = orders.Where(order => !HasStatusEPSetToTrue(order, epFilterName)).ToList();
                     this.Logger.WriteInfo($"      EP filter '{epFilterName} != TRUE': {beforeStatusFilter} -> {orders.Count} orders");
-                    if (beforeStatusFilter > orders.Count)
-                    {
-                        this.Logger.WriteInfo($"      {beforeStatusFilter - orders. Count} orders excluded due to {epFilterName} = TRUE");
-                    }
                 }
 
-                // Sorting
-                if (sortField. ToUpper() == "ORDERID")
+                if (sortField.ToUpper() == "ORDERID")
                 {
                     orders = sortDirection. ToUpper() == "ASCENDING"
                         ? orders.OrderBy(o => o.NumOrderId).ToList()
-                        : orders.OrderByDescending(o => o.NumOrderId).ToList();
+                        :  orders.OrderByDescending(o => o.NumOrderId).ToList();
                 }
                 else
                 {
                     orders = sortDirection.ToUpper() == "ASCENDING"
-                        ? orders.OrderBy(o => o.GeneralInfo.ReferenceNum).ToList()
-                        : orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList();
+                        ? orders.OrderBy(o => o. GeneralInfo.ReferenceNum).ToList()
+                        :  orders.OrderByDescending(o => o.GeneralInfo.ReferenceNum).ToList();
                 }
 
-                this.Logger.WriteInfo($"      GetFilteredProcessedOrders completed.  Returning {orders.Count} orders");
+                this.Logger. WriteInfo($"      GetFilteredProcessedOrders completed. Returning {orders.Count} orders");
                 return orders;
             }
             catch (Exception ex)
             {
                 this.Logger.WriteError($"      ERROR in GetFilteredProcessedOrders: {ex.Message}");
-                this.Logger.WriteError($"      Stack trace: {ex.StackTrace}");
+                this. Logger.WriteError($"      Stack trace: {ex.StackTrace}");
                 throw;
             }
         }
 
-        /// <summary>
-        /// Helper method to get ExtendedProperty value by name
-        /// </summary>
         private string GetExtendedProperty(List<ExtendedProperty> props, string name)
         {
             if (props == null) return "";
@@ -1007,15 +952,11 @@ namespace LinnworksMacro
             return prop != null ? prop.Value : "";
         }
 
-        /// <summary>
-        /// Escapes a string value for CSV format - handles commas, quotes, and newlines
-        /// </summary>
         private string EscapeCsvValue(string value)
         {
-            if (string. IsNullOrEmpty(value))
+            if (string.IsNullOrEmpty(value))
                 return "";
             
-            // If value contains comma, quote, or newline, wrap in quotes and escape internal quotes
             if (value.Contains(",") || value.Contains("\"") || value.Contains("\n") || value.Contains("\r"))
             {
                 return "\"" + value.Replace("\"", "\"\"") + "\"";
@@ -1023,10 +964,6 @@ namespace LinnworksMacro
             return value;
         }
 
-        /// <summary>
-        /// Generates a CSV line for a single order item using the standard format. 
-        /// All notify methods use this to ensure consistent output. 
-        /// </summary>
         private string GenerateStandardCsvLine(OrderDetails order, OrderItem item)
         {
             string primaryPO = GetExtendedProperty(order.ExtendedProperties, "PrimaryPONumber");
@@ -1034,7 +971,7 @@ namespace LinnworksMacro
             string soldTo = GetExtendedProperty(order.ExtendedProperties, "SoldTo");
 
             return string.Join(",",
-                EscapeCsvValue(order. NumOrderId. ToString()),
+                EscapeCsvValue(order.NumOrderId.ToString()),
                 EscapeCsvValue(order.GeneralInfo.ReferenceNum),
                 EscapeCsvValue(order.GeneralInfo.SecondaryReference),
                 EscapeCsvValue(order.GeneralInfo. ExternalReferenceNum),
@@ -1048,7 +985,7 @@ namespace LinnworksMacro
                 order.GeneralInfo.NumItems.ToString(),
                 EscapeCsvValue(order.ShippingInfo.PostalServiceName),
                 order.ShippingInfo.TotalWeight.ToString(),
-                EscapeCsvValue(order.ShippingInfo.TrackingNumber),
+                EscapeCsvValue(order. ShippingInfo.TrackingNumber),
                 EscapeCsvValue(item.SKU),
                 EscapeCsvValue(item. ChannelSKU),
                 EscapeCsvValue(item.Title),
@@ -1061,40 +998,44 @@ namespace LinnworksMacro
             );
         }
 
-        /// <summary>
-        /// Unified CSV formatting method used by all notification types. 
-        /// Uses the standardized header and format from notifyAcknowledge.
-        /// </summary>
-        /// <param name="orders">List of orders to include in CSV</param>
-        /// <param name="filePrefix">Prefix for the filename (e.g., "Acknowledge", "OOS_FolderName", "Shipped")</param>
-        /// <param name="localFilePath">Local path to save the CSV file</param>
-        /// <param name="filetype">File type identifier for naming</param>
-        /// <param name="newFolder">For notifyAcknowledge only - the folder name to identify orders that should be moved.  Pass null for other types.</param>
-        /// <returns>Tuple containing CSV content, filename, all order IDs, and (for notifyAcknowledge) order IDs from newFolder</returns>
-        private (StringBuilder Csv, string FileName, Guid[] OrderIds, Guid[] NewFolderOrderIds) FormatStandardCsv(
-            List<OrderDetails> orders,
-            string filePrefix,
-            string localFilePath,
-            string filetype,
-            string newFolder)
+        private string SanitizeForFileName(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return "";
+            
+            char[] invalidChars = Path.GetInvalidFileNameChars();
+            string sanitized = input;
+            
+            foreach (char c in invalidChars)
+            {
+                sanitized = sanitized.Replace(c. ToString(), "");
+            }
+            
+            sanitized = sanitized.Replace(" ", "").Trim();
+            
+            return sanitized;
+        }
+
+        private (StringBuilder Csv, string FileName, Guid[] OrderIds, Guid[] NewFolderOrderIds) FormatStandardCsv(List<OrderDetails> orders, string filePrefix, string localFilePath, string filetype, string subSource, string newFolder)
         {
             this.Logger.WriteInfo($"        FormatStandardCsv started for {orders.Count} orders with prefix '{filePrefix}'");
 
             try
             {
-                string fileName = $"Orders_{filePrefix}_{DateTime.Now:yyyyMMddHHmmss}_{filetype}. csv";
+                string sanitizedSubSource = SanitizeForFileName(subSource);
+                string sanitizedFiletype = SanitizeForFileName(filetype);
+                string sanitizedPrefix = SanitizeForFileName(filePrefix);
+                
+                string fileName = $"{sanitizedSubSource}_Orders_{sanitizedPrefix}_{DateTime.Now:yyyyMMddHHmmss}_{sanitizedFiletype}.csv";
+                
                 this.Logger.WriteInfo($"        Generated filename: {fileName}");
 
                 var csv = new StringBuilder();
-
-                // Use the standardized header for all CSV files
                 csv.AppendLine(StandardCsvHeader);
 
-                // Collect all order IDs
                 Guid[] orderIds = orders.Select(order => order.OrderId).ToArray();
                 this.Logger.WriteInfo($"        Collected {orderIds.Length} order IDs");
 
-                // For notifyAcknowledge, also collect order IDs from the newFolder for moving to 'Updated'
                 Guid[] newFolderOrderIds = new Guid[0];
                 if (! string.IsNullOrEmpty(newFolder))
                 {
@@ -1102,9 +1043,8 @@ namespace LinnworksMacro
                         .Where(order => order.FolderName != null && order.FolderName.Any(f => string.Equals(f, newFolder, StringComparison.OrdinalIgnoreCase)))
                         .Select(order => order.OrderId)
                         .ToArray();
-                    this.Logger. WriteInfo($"        Collected {newFolderOrderIds.Length} order IDs from '{newFolder}' folder for move to 'Updated'");
+                    this.Logger.WriteInfo($"        Collected {newFolderOrderIds.Length} order IDs from '{newFolder}' folder for move to 'Updated'");
 
-                    // Log orders that will NOT be moved
                     var ordersNotMoving = orders.Where(order => order.FolderName == null || !order.FolderName.Any(f => string.Equals(f, newFolder, StringComparison.OrdinalIgnoreCase))).ToList();
                     if (ordersNotMoving.Count > 0)
                     {
