@@ -7,85 +7,106 @@
 // After successful file output, the corresponding ExtendedProperty is set to TRUE for each order.
 //
 // FUNCTIONALITY:
-// 1. notifyAcknowledge (Type: Open)
-//    - Returns ALL open orders (not just 'New' folder) filtered by subSource
+// 1. notifyAcknowledge (Type: OpenAcknowledge)
+//    - Returns ALL open orders (not restricted to any folder) filtered by subSource
 //    - Only includes orders where ExtendedProperty 'ChannelUpdatesRequired' is TRUE
 //    - Only includes orders where 'statusACK' is FALSE or not set
-//    - Excludes parked and unpaid orders (Status=1 means PAID)
-//    - After processing, ONLY moves orders from newFolder to 'Updated' folder
-//    - Orders from other folders remain in their current folder
-//    - After processing, sets ExtendedProperty 'statusACK' to TRUE for all processed orders
+//    - Excludes parked, unpaid, and locked orders (Status=1 means PAID)
+//    - After processing, ONLY moves orders that are in the newFolder to 'Updated' folder
+//    - Orders from other folders remain in their current folder but still get processed
+//    - After processing, sets ExtendedProperty 'statusACK' to TRUE for ALL processed orders
 //
 // 2. notifyOOS (Type: Open)
 //    - Returns open orders in the specified oosFolder filtered by subSource
 //    - Only includes orders where ExtendedProperty 'ChannelUpdatesRequired' is TRUE
 //    - Only includes orders where 'statusOOS' is FALSE or not set
-//    - Excludes parked and unpaid orders
+//    - Excludes parked, unpaid, and locked orders
+//    - NO folder move after processing
 //    - After processing, sets ExtendedProperty 'statusOOS' to TRUE
 //
 // 3. notifyBIS (Type: Open)
 //    - Returns open orders in the specified bisFolder filtered by subSource
 //    - Only includes orders where ExtendedProperty 'ChannelUpdatesRequired' is TRUE
 //    - Only includes orders where 'statusBIS' is FALSE or not set
-//    - Excludes parked and unpaid orders
-//    - After processing, moves orders to 'Updated' folder
+//    - Excludes parked, unpaid, and locked orders
+//    - After processing, moves ALL processed orders to 'Updated' folder
 //    - After processing, sets ExtendedProperty 'statusBIS' to TRUE
 //
 // 4. notifyShipped (Type:  Shipped)
-//    - Returns processed/shipped orders within lookBackDays
+//    - Returns processed/shipped orders within lookBackDays (searches by processed date)
 //    - Filtered by subSource and Source
 //    - Only includes orders where ExtendedProperty 'ChannelUpdatesRequired' is TRUE
 //    - Only includes orders where 'StatusASN' is FALSE or not set
 //    - Excludes orders already in 'Completed' folder
+//    - NO folder move after processing
 //    - After processing, sets ExtendedProperty 'StatusASN' to TRUE
 //
-// 5. actionCancelled (Type: Open)
+// 5. actionCancelled (Type: OpenNoEPFilter)
 //    - Returns open orders in the cancelFolder filtered by subSource
 //    - NO ExtendedProperty filtering applied (no ChannelUpdatesRequired check)
+//    - NO statusEP filter applied
+//    - Excludes parked, unpaid, and locked orders
+//    - After processing, CANCELS all orders (calls Api.Orders.CancelOrder)
 //    - NO ExtendedProperty set after processing
-//    - Excludes parked and unpaid orders
-//    - Processes orders that are pending cancellation but not yet cancelled
 //
-// 6. notifyCancelled (Type:  Cancelled)
-//    - Returns cancelled orders within lookBackDays
+// 6. notifyCancelled (Type: Cancelled)
+//    - Returns cancelled orders within lookBackDays (searches by cancelled date)
 //    - Filtered by subSource and Source
 //    - Only includes orders where ExtendedProperty 'ChannelUpdatesRequired' is TRUE
 //    - Only includes orders where 'StatusCANC' is FALSE or not set
 //    - Excludes orders already in 'Completed' folder
+//    - NO folder move after processing
 //    - After processing, sets ExtendedProperty 'StatusCANC' to TRUE
 //
 // OUTPUT: 
-// - CSV files are either saved locally (outputMethod = "Local") or uploaded via SFTP (outputMethod = "FTP")
+// - CSV files are saved locally first, then optionally uploaded via SFTP
+// - Filename format: {subSource}_Orders_{type}_{timestamp}_{filetype}.csv
+//   Examples: MultiVery_Orders_Shipped_20260115141132_Direct.csv
 // - Email notifications are sent after each file operation
-// - ALL CSV files now use the same standardized format with identical headers
-// - Filenames are prefixed with subSource:  {subSource}_Orders_{type}_{timestamp}_{filetype}.csv
+// - ALL CSV files use the same standardized format with identical headers
 //
-// FILTERS APPLIED TO ALL OPEN ORDERS:
-// - Status = 1 (Paid - Note: In Linnworks, Status 0=UNPAID, 1=PAID, so filtering Status=1 ensures only paid orders)
+// FILTERS APPLIED TO ALL OPEN ORDERS (Types: OpenAcknowledge, Open, OpenNoEPFilter):
+// - Status = 1 (Paid - Note: In Linnworks, Status 0=UNPAID, 1=PAID)
 // - Parked = 0 (Not parked)
 // - Locked = 0 (Not locked)
 //
+// FILTERS APPLIED TO PROCESSED ORDERS (Types:  Shipped, Cancelled):
+// - Searches within lookBackDays date range
+// - Filters by Source and SubSource
+// - Excludes orders in 'Completed' folder
+//
 // EXTENDED PROPERTY FILTERS & UPDATES:
-// | Notification Type  | ChannelUpdatesRequired | EP Status Filter    | EP Set After Processing |
-// |--------------------|------------------------|---------------------|-------------------------|
-// | notifyAcknowledge  | Must be TRUE           | statusACK != TRUE   | statusACK = TRUE        |
-// | notifyOOS          | Must be TRUE           | statusOOS != TRUE   | statusOOS = TRUE        |
-// | notifyBIS          | Must be TRUE           | statusBIS != TRUE   | statusBIS = TRUE        |
-// | notifyShipped      | Must be TRUE           | StatusASN != TRUE   | StatusASN = TRUE        |
-// | actionCancelled    | No filter              | No EP filter        | No EP update            |
-// | notifyCancelled    | Must be TRUE           | StatusCANC != TRUE  | StatusCANC = TRUE       |
+// | Notification Type  | ChannelUpdatesRequired | EP Status Filter    | EP Set After Processing | Folder Action              |
+// |--------------------|------------------------|---------------------|-------------------------|----------------------------|
+// | notifyAcknowledge  | Must be TRUE           | statusACK != TRUE   | statusACK = TRUE        | Move from newFolder to Updated |
+// | notifyOOS          | Must be TRUE           | statusOOS != TRUE   | statusOOS = TRUE        | None                       |
+// | notifyBIS          | Must be TRUE           | statusBIS != TRUE   | statusBIS = TRUE        | Move to Updated            |
+// | notifyShipped      | Must be TRUE           | StatusASN != TRUE   | StatusASN = TRUE        | None                       |
+// | actionCancelled    | No filter              | No EP filter        | No EP update            | Cancel orders              |
+// | notifyCancelled    | Must be TRUE           | StatusCANC != TRUE  | StatusCANC = TRUE       | None                       |
+//
+// CSV HEADER COLUMNS:
+// Linnworks Order Number, Reference Num, Secondary Ref, External Ref, Primary PO Field,
+// JDE Order Number, Sold To Account, Received Date, Source, Sub Source, Despatch By Date,
+// Number Order Items, Postal Service Name, Total Order Weight, Tracking Number,
+// Item > SKU, Item > ChannelSKU, Item > Description, Item > Quantity, Item > Line Ref,
+// Item > Item Cost (ex VAT), Item > Item Discount (ex VAT), Item > Tax Rate, Item > Weight Per Item
 //
 // PARAMETERS:
-// - Source:  The order source channel
-// - subSource: The order sub-source for filtering
-// - notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, actionCancelled, notifyCancelled: TRUE/FALSE flags
-// - newFolder, oosFolder, bisFolder, cancelFolder:  Folder names for different order states
-// - outputMethod: "Local" or "FTP" - determines where CSV files are saved
-// - SFTP*:  SFTP connection parameters (used when outputMethod = "FTP")
+// - Source:  The order source channel (used for Shipped/Cancelled searches)
+// - subSource: The order sub-source for filtering all order types
+// - notifyAcknowledge, notifyOOS, notifyBIS, notifyShipped, actionCancelled, notifyCancelled:  TRUE/FALSE flags to enable each step
+// - newFolder:  Folder name for notifyAcknowledge (orders in this folder get moved to Updated)
+// - oosFolder: Folder name for notifyOOS
+// - bisFolder: Folder name for notifyBIS
+// - cancelFolder: Folder name for actionCancelled
+// - outputMethod: "Local" or "FTP" - determines where CSV files are saved/uploaded
+// - SFTP*:  SFTP connection parameters (Server, Port, Username, Password, FolderRoot)
 // - *Directory:  SFTP directory paths for each notification type
-// - filetype: File type identifier for naming
-// - sortField, sortDirection:  Sorting parameters
-// - lookBackDays: Number of days to look back for processed orders
+// - filetype: File type identifier included in filename
+// - sortField: Field to sort orders by ("ORDERID" or "REFERENCE")
+// - sortDirection: Sort direction ("ASCENDING" or "DESCENDING")
+// - lookBackDays:  Number of days to look back for processed/cancelled orders
 // - localFilePath: Local directory path for saving CSV files
 
 using System;
