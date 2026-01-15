@@ -44,7 +44,7 @@ namespace LinnMacroCustomer
             string filetype = "Direct";
             string sortField = "GENERAL_INFO_ORDER_ID";
             string sortDirection = "ASC";
-            int lookBackDays = 5;
+            int lookBackDays = 14;
             string localFilePath = @"C:\Users\adamw\OneDrive - johnhogggroup\Documents\Projects\LinnworksMacro";
             string outputMethod = "Local"; /// Local or FTP;
 
