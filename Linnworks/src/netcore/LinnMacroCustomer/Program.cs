@@ -47,6 +47,8 @@ namespace LinnMacroCustomer
             int lookBackDays = 14;
             string localFilePath = @"C:\Users\adamw\OneDrive - johnhogggroup\Documents\Projects\LinnworksMacro";
             string outputMethod = "Local"; /// Local or FTP;
+            string sendEmail = "FALSE";
+            string emailRecipientGuid = "c9a7f89f-790f-4db2-88a1-f7f31cccb5b8";
 
             macro.Execute(
             Source,
@@ -77,7 +79,9 @@ namespace LinnMacroCustomer
             sortDirection,
             lookBackDays,
             localFilePath,
-            outputMethod
+            outputMethod,
+            sendEmail,
+            emailRecipientGuid
             );
 
 
