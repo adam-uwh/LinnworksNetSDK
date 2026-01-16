@@ -1,4 +1,4 @@
-﻿// UW Home Default Channel Updater (Refactored)
+﻿// UW Home Default Channel Updater Macro
 // =============================================
 // 
 // SUMMARY:   
@@ -68,18 +68,19 @@
 // - Added sendEmail parameter to control email notifications
 // - Added emailRecipientGuid parameter to specify email recipient
 
+
 using System;
 using System.Collections.Generic;
-using System. Linq;
+using System.Linq;
 using System.Text;
 using LinnworksAPI;
-using LinnworksMacroHelpers. Classes;
+using LinnworksMacroHelpers.Classes;
 using System.ComponentModel;
 using System.IO;
 
 namespace LinnworksMacro
 {
-    public class LinnworksMacro :  LinnworksMacroHelpers.LinnworksMacroBase
+    public class LinnworksMacro : LinnworksMacroHelpers.LinnworksMacroBase
     {
         #region Constants
 
@@ -212,7 +213,6 @@ namespace LinnworksMacro
         {
             LogExecutionStart(Source, subSource, outputMethod, sendEmail, emailRecipientGuid);
 
-            // Parse email settings
             bool emailEnabled = string.Equals(sendEmail, Constants.TrueValue, StringComparison.OrdinalIgnoreCase);
             Guid recipientGuid = Guid.Empty;
             
@@ -225,7 +225,7 @@ namespace LinnworksMacro
                 }
                 else if (! Guid.TryParse(emailRecipientGuid, out recipientGuid))
                 {
-                    Logger.WriteError(string.Format("Invalid email recipient GUID format: {0}.  Emails will not be sent.", emailRecipientGuid));
+                    Logger.WriteError(string.Format("Invalid email recipient GUID format: {0}. Emails will not be sent.", emailRecipientGuid));
                     emailEnabled = false;
                 }
             }
@@ -272,11 +272,10 @@ namespace LinnworksMacro
 
         private void ProcessNotification(NotificationConfig config, ProcessingContext ctx)
         {
-            Logger.WriteInfo(string.Format("Processing {0}...", config.NotifyType));
+            Logger.WriteInfo(string.Format("Processing {0}.. .", config.NotifyType));
 
             try
             {
-                // 1. Fetch orders
                 var orders = FetchOrders(config, ctx);
                 if (orders == null || orders.Count == 0)
                 {
@@ -286,27 +285,23 @@ namespace LinnworksMacro
 
                 Logger.WriteInfo(string.Format("Found {0} orders for {1}", orders.Count, config.NotifyType));
 
-                // 2. Generate CSV
                 var csvResult = GenerateCsv(orders, config, ctx);
 
-                // 3. Output (FTP or Local)
                 bool outputSuccess;
                 string emailSubject;
                 string emailBody;
                 OutputCsv(csvResult, config, ctx, out outputSuccess, out emailSubject, out emailBody);
 
-                // 4. Post-processing (folder moves, EP updates, cancellations)
                 if (outputSuccess)
                 {
                     ProcessPostOutputActions(config, csvResult);
                 }
 
-                // 5. Send notification email (only if enabled)
                 SendNotificationEmail(emailSubject, emailBody, ctx);
             }
             catch (Exception ex)
             {
-                Logger. WriteError(string.Format("Error processing {0}: {1}", config.NotifyType, ex.Message));
+                Logger.WriteError(string.Format("Error processing {0}: {1}", config.NotifyType, ex.Message));
                 SendNotificationEmail(
                     string.Format("Error Processing {0}", config.NotifyType),
                     string.Format("An error occurred:  {0}", ex.Message),
@@ -319,15 +314,15 @@ namespace LinnworksMacro
             switch (config.Type)
             {
                 case NotificationType.OpenAcknowledge:
-                    return GetFilteredOpenOrders(ctx.SubSource, null, ctx.SortField, ctx.SortDirection, config.EPFilter, false, true);
+                    return GetFilteredOpenOrders(ctx. SubSource, null, ctx.SortField, ctx.SortDirection, config.EPFilter, false, true);
                 case NotificationType. Open:
                     return GetFilteredOpenOrders(ctx.SubSource, config. Folder, ctx.SortField, ctx.SortDirection, config. EPFilter, false, true);
                 case NotificationType.OpenNoEPFilter:
                     return GetFilteredOpenOrders(ctx.SubSource, config.Folder, ctx.SortField, ctx.SortDirection, null, true, false);
-                case NotificationType. Shipped:
+                case NotificationType.Shipped:
                     return GetFilteredProcessedOrders(ctx.SubSource, ctx.Source, ctx.SortField, ctx.SortDirection, ctx.LookBackDays, true, config.EPFilter);
-                case NotificationType.Cancelled:
-                    return GetFilteredProcessedOrders(ctx.SubSource, ctx.Source, ctx.SortField, ctx.SortDirection, ctx.LookBackDays, false, config.EPFilter);
+                case NotificationType. Cancelled:
+                    return GetFilteredProcessedOrders(ctx. SubSource, ctx.Source, ctx.SortField, ctx.SortDirection, ctx.LookBackDays, false, config.EPFilter);
                 default:
                     return new List<OrderDetails>();
             }
@@ -342,7 +337,7 @@ namespace LinnworksMacro
             }
             string trackingFolder = config.NotifyType == "notifyAcknowledge" ? ctx.NewFolder : null;
             
-            return FormatStandardCsv(orders, filePrefix, ctx.LocalFilePath, ctx.FileType, ctx.SubSource, trackingFolder);
+            return FormatStandardCsv(orders, filePrefix, ctx.FileType, ctx.SubSource, trackingFolder);
         }
 
         private void OutputCsv(CsvResult result, NotificationConfig config, ProcessingContext ctx,
@@ -352,12 +347,14 @@ namespace LinnworksMacro
             emailSubject = "";
             emailBody = "";
 
-            if (string. Equals(ctx.OutputMethod, "FTP", StringComparison.OrdinalIgnoreCase))
+            bool isFtpMode = string.Equals(ctx.OutputMethod, "FTP", StringComparison.OrdinalIgnoreCase);
+
+            if (isFtpMode)
             {
                 var sftpSettings = new SFtpSettings
                 {
-                    UserName = ctx.SftpSettings.UserName,
-                    Password = ctx. SftpSettings.Password,
+                    UserName = ctx. SftpSettings.UserName,
+                    Password = ctx.SftpSettings.Password,
                     Server = ctx.SftpSettings.Server,
                     Port = ctx.SftpSettings.Port,
                     FullPath = string.Format("{0}/{1}/{2}", ctx.SftpFolderRoot, config.Directory, result.FileName)
@@ -381,11 +378,23 @@ namespace LinnworksMacro
             }
             else
             {
+                // Only save locally if NOT in FTP mode
                 string fullLocalPath = Path.Combine(ctx.LocalFilePath, result.FileName);
-                Logger.WriteInfo(string.Format("CSV saved locally at: {0}", fullLocalPath));
-                outputSuccess = true;
-                emailSubject = string.Format("Local Save Successful for {0}", config. Folder);
-                emailBody = string.Format("The CSV file '{0}' was successfully saved locally at '{1}'.", result.FileName, fullLocalPath);
+                
+                try
+                {
+                    SaveCsvLocally(result. Csv, fullLocalPath);
+                    Logger.WriteInfo(string.Format("CSV saved locally at: {0}", fullLocalPath));
+                    outputSuccess = true;
+                    emailSubject = string.Format("Local Save Successful for {0}", config. Folder);
+                    emailBody = string.Format("The CSV file '{0}' was successfully saved locally at '{1}'.", result. FileName, fullLocalPath);
+                }
+                catch (Exception ex)
+                {
+                    Logger. WriteError(string.Format("FAILED: Could not save CSV locally:  {0}", ex.Message));
+                    emailSubject = string. Format("Local Save Failed for {0}", config.Folder);
+                    emailBody = string.Format("The CSV file '{0}' could not be saved locally. Error: {1}", result.FileName, ex.Message);
+                }
             }
         }
 
@@ -393,7 +402,6 @@ namespace LinnworksMacro
         {
             Logger.WriteInfo(string.Format("Processing post-output actions for {0}...", config.NotifyType));
 
-            // Handle folder moves and cancellations
             var orderIdsToProcess = config.NotifyType == "notifyAcknowledge" 
                 ? result.NewFolderOrderIds 
                 : result.OrderIds;
@@ -410,7 +418,6 @@ namespace LinnworksMacro
                 }
             }
 
-            // Handle EP updates
             if (! string.IsNullOrEmpty(config.EPUpdate) && result.OrderIds != null && result.OrderIds.Length > 0)
             {
                 SetOrderExtendedProperty(result.OrderIds, config. EPUpdate, Constants.TrueValue);
@@ -444,11 +451,9 @@ namespace LinnworksMacro
                 if (guids.Count == 0)
                     return new List<OrderDetails>();
 
-                // Batch fetch order details
                 var orders = LoadOrderDetailsBatched(guids);
 
-                // Apply EP filters unless skipped
-                if (!skipAllEPFilters)
+                if (! skipAllEPFilters)
                 {
                     if (requireChannelUpdates)
                     {
@@ -469,7 +474,7 @@ namespace LinnworksMacro
             }
             catch (Exception ex)
             {
-                Logger.WriteError(string. Format("Error in GetFilteredOpenOrders: {0}", ex.Message));
+                Logger.WriteError(string.Format("Error in GetFilteredOpenOrders: {0}", ex.Message));
                 throw;
             }
         }
@@ -488,7 +493,7 @@ namespace LinnworksMacro
             try
             {
                 DateTime toDate = DateTime. UtcNow.Date.AddDays(1);
-                DateTime fromDate = DateTime.UtcNow.Date.AddDays(-lookBackDays);
+                DateTime fromDate = DateTime.UtcNow.Date. AddDays(-lookBackDays);
 
                 var searchFilters = new List<SearchFilters>
                 {
@@ -507,27 +512,24 @@ namespace LinnworksMacro
                     ResultsPerPage = 200
                 };
 
-                var response = Api.ProcessedOrders.SearchProcessedOrders(request);
+                var response = Api.ProcessedOrders. SearchProcessedOrders(request);
                 int responseCount = (response.ProcessedOrders != null && response.ProcessedOrders.Data != null) 
                     ? response.ProcessedOrders.Data.Count 
                     : 0;
                 Logger.WriteInfo(string.Format("SearchProcessedOrders returned {0} orders", responseCount));
 
-                if (response.ProcessedOrders == null || response.ProcessedOrders.Data == null || ! response.ProcessedOrders.Data.Any())
+                if (response.ProcessedOrders == null || response.ProcessedOrders. Data == null || ! response.ProcessedOrders.Data.Any())
                     return new List<OrderDetails>();
 
-                // Batch fetch all order details at once instead of one-by-one
                 var orderGuids = response.ProcessedOrders.Data.Select(po => po.pkOrderID).ToList();
                 var allOrders = LoadOrderDetailsBatched(orderGuids);
 
-                // Filter out completed orders
                 var orders = allOrders
                     .Where(o => o.FolderName == null || ! o.FolderName.Contains(Constants.CompletedFolder))
                     .ToList();
 
                 Logger.WriteInfo(string.Format("After Completed folder filter: {0} -> {1}", allOrders.Count, orders.Count));
 
-                // Apply EP filters
                 int beforeChannelFilter = orders.Count;
                 orders = orders.Where(o => HasChannelUpdatesRequired(o)).ToList();
                 Logger.WriteInfo(string.Format("After ChannelUpdatesRequired filter: {0} -> {1}", beforeChannelFilter, orders.Count));
@@ -619,7 +621,7 @@ namespace LinnworksMacro
         private List<OrderDetails> ApplySorting(List<OrderDetails> orders, string sortField, string sortDirection)
         {
             bool ascending = sortDirection != null && sortDirection.ToUpperInvariant() == "ASCENDING";
-            bool byOrderId = sortField == null || sortField.ToUpperInvariant() != "REFERENCE";
+            bool byOrderId = sortField == null || sortField. ToUpperInvariant() != "REFERENCE";
 
             if (byOrderId)
             {
@@ -694,7 +696,7 @@ namespace LinnworksMacro
         private ExtendedProperty[] UpdateOrAddProperty(List<ExtendedProperty> existing, string name, string value)
         {
             var properties = existing.ToList();
-            var existingProp = properties.FirstOrDefault(p => string.Equals(p. Name, name, StringComparison.OrdinalIgnoreCase));
+            var existingProp = properties.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
             if (existingProp != null)
             {
@@ -763,7 +765,7 @@ namespace LinnworksMacro
 
         #region CSV Generation
 
-        private CsvResult FormatStandardCsv(List<OrderDetails> orders, string filePrefix, string localFilePath, string filetype, string subSource, string newFolder)
+        private CsvResult FormatStandardCsv(List<OrderDetails> orders, string filePrefix, string filetype, string subSource, string newFolder)
         {
             string sanitizedSubSource = SanitizeForFileName(subSource);
             string sanitizedFiletype = SanitizeForFileName(filetype);
@@ -787,7 +789,6 @@ namespace LinnworksMacro
                 Logger.WriteInfo(string.Format("Orders in '{0}' to be moved:  {1}", newFolder, newFolderOrderIds.Length));
             }
 
-            // Generate CSV lines - cache EP lookups per order
             foreach (var order in orders)
             {
                 var epCache = BuildEPCache(order. ExtendedProperties);
@@ -798,10 +799,6 @@ namespace LinnworksMacro
             }
 
             Logger.WriteInfo(string.Format("CSV generated: {0} item lines from {1} orders", orders.Sum(o => o.Items.Count), orders.Count));
-
-            // Save locally
-            string fullPath = Path.Combine(localFilePath, fileName);
-            SaveCsvLocally(csv, fullPath);
 
             return new CsvResult
             {
@@ -834,7 +831,7 @@ namespace LinnworksMacro
             {
                 order.NumOrderId.ToString(),
                 order.GeneralInfo.ReferenceNum,
-                order.GeneralInfo.SecondaryReference,
+                order.GeneralInfo. SecondaryReference,
                 order.GeneralInfo.ExternalReferenceNum,
                 GetEPFromCache(epCache, "PrimaryPONumber"),
                 GetEPFromCache(epCache, "JDEOrderNo"),
@@ -850,8 +847,8 @@ namespace LinnworksMacro
                 item.SKU,
                 item. ChannelSKU,
                 item.Title,
-                item.Quantity. ToString(),
-                item.ItemNumber,
+                item. Quantity.ToString(),
+                item. ItemNumber,
                 item.PricePerUnit.ToString(),
                 item. DiscountValue.ToString(),
                 item.TaxRate.ToString(),
@@ -886,26 +883,18 @@ namespace LinnworksMacro
             var result = new StringBuilder();
             foreach (char c in input)
             {
-                if (!invalidChars.Contains(c) && c != ' ')
+                if (! invalidChars.Contains(c) && c != ' ')
                 {
-                    result.Append(c);
+                    result. Append(c);
                 }
             }
-            return result.ToString().Trim();
+            return result. ToString().Trim();
         }
 
         private void SaveCsvLocally(StringBuilder csv, string localPath)
         {
-            try
-            {
-                File.WriteAllText(localPath, csv.ToString());
-                Logger.WriteInfo(string.Format("File saved:  {0}", localPath));
-            }
-            catch (Exception ex)
-            {
-                Logger.WriteError(string.Format("Error saving file locally: {0}", ex.Message));
-                throw;
-            }
+            File.WriteAllText(localPath, csv.ToString());
+            Logger.WriteInfo(string.Format("File saved:  {0}", localPath));
         }
 
         #endregion
@@ -926,7 +915,7 @@ namespace LinnworksMacro
 
                     if (! uploadResult. IsSuccess)
                     {
-                        Logger.WriteError(string.Format("SFTP upload failed: {0}", uploadResult.ErrorMessage));
+                        Logger.WriteError(string.Format("SFTP upload failed: {0}", uploadResult. ErrorMessage));
                         return false;
                     }
 
@@ -946,14 +935,12 @@ namespace LinnworksMacro
 
         private void SendNotificationEmail(string subject, string body, ProcessingContext ctx)
         {
-            // Check if email sending is enabled
             if (! ctx.SendEmail)
             {
                 Logger.WriteInfo("Email notifications disabled - skipping email send");
                 return;
             }
 
-            // Validate recipient GUID
             if (ctx.EmailRecipientGuid == Guid.Empty)
             {
                 Logger.WriteInfo("No valid email recipient GUID configured - skipping email send");
@@ -981,7 +968,7 @@ namespace LinnworksMacro
                 else
                 {
                     string failedRecipients = response. FailedRecipients != null 
-                        ? string.Join(",", response.FailedRecipients) 
+                        ? string. Join(",", response.FailedRecipients) 
                         : "";
                     Logger.WriteError(string.Format("Email failed.  Failed recipients: {0}", failedRecipients));
                 }
@@ -1067,7 +1054,7 @@ namespace LinnworksMacro
                     Folder = cancelDirectory,
                     Directory = cancelDirectory,
                     Type = NotificationType.Cancelled,
-                    EPFilter = Constants.EPNames.StatusCANC,
+                    EPFilter = Constants.EPNames. StatusCANC,
                     EPUpdate = Constants.EPNames.StatusCANC,
                     RequiresChannelUpdates = true
                 }
