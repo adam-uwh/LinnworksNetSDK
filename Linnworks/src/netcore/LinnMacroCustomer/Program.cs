@@ -16,7 +16,7 @@ namespace LinnMacroCustomer
             //////////////////////////////////////////////////////////////////////////////
             /// Configure Parameters for UW Home Linnworks Default Channel Updater Macro 
             /// //////////////////////////////////////////////////////////////////////////
-
+            /*
             /// Parameters
             string Source = "DATAIMPORTEXPORT";
             string subSource = "MultiVery";
@@ -84,7 +84,7 @@ namespace LinnMacroCustomer
             emailRecipientGuid
             );
 
-
+            */
             //////////////////////////////////////////////////////////////////////////////
             /// END Configure Parameters for UW Home Linnworks Default Channel Updater Macro  
             /// //////////////////////////////////////////////////////////////////////////
@@ -137,11 +137,7 @@ namespace LinnMacroCustomer
             /// Configure Parameters for UW Home B2B JDE Export Macro 
             /// //////////////////////////////////////////////////////////////////////////
             // Set required variables
-            /*
-            string source                = "";
-            string subSource             = "UW Home";
-            string accountNumber         = "";
-
+            
             string SFTPServer            = "sftp.jrslsecure.com/";
             int    SFTPPort              = 22;
             string SFTPUsername          = "Ecommerce";
@@ -154,31 +150,17 @@ namespace LinnMacroCustomer
             string sortDirection         = "";
             int    lastDays              = 20;
 
-            bool   addShippingCharge     = true;
-            string shippingChargeSku     = "NS100000000ZZ";
-            string extendedPropertyName  = "soldto";
-
-            string priceFlag             = "P";
-            string orderType             = "SO";
-            string branchPlan            = "90";
-            string shipTo                = "";
             string shipCode              = "";
-            string holdStatus            = "";
-
-            bool   addDispatchDays       = true;  // corrected type
-            int    dispatchModifier      = 11;
 
             string folderUpdated         = "Updated";
             string folderCompleted       = "In JDE";
+            string folderError           = "Order Errors";
 
             bool   ignoreUnknownSKUs     = true;
 
 
             // Pass variables to macro.Execute (match signature in LinnworksMacro)
             macro.Execute(
-                source,
-                subSource,
-                accountNumber,
                 SFTPServer,
                 SFTPPort,
                 SFTPUsername,
@@ -188,22 +170,13 @@ namespace LinnMacroCustomer
                 sortField,
                 sortDirection,
                 lastDays,
-                addShippingCharge,
-                shippingChargeSku,
-                extendedPropertyName,
-                priceFlag,
-                orderType,
-                branchPlan,
-                shipTo,
                 shipCode,
-                holdStatus,
-                addDispatchDays,
-                dispatchModifier,
                 folderUpdated,
                 folderCompleted,
+                folderError,
                 ignoreUnknownSKUs
             );
-            */
+            
             //////////////////////////////////////////////////////////////////////////////
             /// END Configure Parameters for UW Home B2B JDE Export Macro 
             /// //////////////////////////////////////////////////////////////////////////
