@@ -701,25 +701,50 @@ namespace LinnworksMacro
         }
 
         // Email lookup using dynamic access only
+        /// <summary>
+        /// Email lookup - FIXED to use correct Linnworks API property names.
+        /// The CustomerAddress class has 'EmailAddress' property (not 'Email').
+        /// Also checks BillingAddress as a fallback.
+        /// </summary>
         private string GetEmailFromOrder(OrderDetails ods)
         {
-            try
-            {
-                dynamic ci = ods?.CustomerInfo;
-                if (ci != null)
-                {
-                    try { string v = ci.Email; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
-                    try { string v = ci.cEmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
-                }
-            }
-            catch { }
-
+            // First, try the shipping/delivery address (CustomerInfo.Address)
             try
             {
                 dynamic addr = ods?.CustomerInfo?.Address;
                 if (addr != null)
                 {
+                    // Primary property name in CustomerAddress class is 'EmailAddress'
+                    try { string v = addr.EmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                    // Also try alternate property names just in case
                     try { string v = addr.Email; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                    try { string v = addr.cEmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                }
+            }
+            catch { }
+
+            // Second, try the billing address (CustomerInfo.BillingAddress)
+            try
+            {
+                dynamic billingAddr = ods?.CustomerInfo?.BillingAddress;
+                if (billingAddr != null)
+                {
+                    try { string v = billingAddr.EmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                    try { string v = billingAddr.Email; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                    try { string v = billingAddr.cEmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                }
+            }
+            catch { }
+
+            // Third, try CustomerInfo directly (some API versions may have email at this level)
+            try
+            {
+                dynamic ci = ods?.CustomerInfo;
+                if (ci != null)
+                {
+                    try { string v = ci.EmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                    try { string v = ci.Email; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
+                    try { string v = ci.cEmailAddress; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { }
                 }
             }
             catch { }
