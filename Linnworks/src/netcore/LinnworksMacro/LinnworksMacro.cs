@@ -68,12 +68,23 @@ namespace LinnworksMacro
     ///    - OD (Order Detail) lines: One per item (9 pipe-delimited fields)
     ///    - Optional shipping charge as additional OD line
     /// 
-    /// 5. FILE OUTPUT
+    /// 5. DELIVERY NAME/ADDRESS LOGIC (Columns 9-13)
+    ///    Priority logic to preserve both name and company when present:
+    ///    - If FullName + Company both present:
+    ///      Col 9 = FullName, Col 10 = Company, Col 11 = Address1, Col 12 = Address2, Col 13 = Address3 + Town (concatenated)
+    ///    - If FullName only (no Company):
+    ///      Col 9 = FullName, Col 10 = Address1, Col 11 = Address2, Col 12 = Address3, Col 13 = Town
+    ///    - If Company only (no FullName):
+    ///      Col 9 = Company, Col 10 = Address1, Col 11 = Address2, Col 12 = Address3, Col 13 = Town
+    ///    - If neither FullName nor Company:
+    ///      Col 9 = Address1, Col 10 = Address2, Col 11 = Address3, Col 12 = Town, Col 13 = empty
+    /// 
+    /// 6. FILE OUTPUT
     ///    - Filename format: {SoldTo}_{ddMMyyyyHHmmss}.csv
     ///    - If localFilePath provided: saves to local directory (UTF-8 without BOM)
     ///    - Otherwise: uploads via SFTP to configured server
     /// 
-    /// 6. POST-PROCESSING
+    /// 7. POST-PROCESSING
     ///    - Successful: Order moved to folderCompleted, note added with timestamp
     ///    - Failed: Order moved to folderError with error details in note
     /// 
@@ -340,6 +351,98 @@ namespace LinnworksMacro
         }
 
         /// <summary>
+        /// Helper method to concatenate two strings with a separator, handling empty values.
+        /// </summary>
+        private string ConcatenateWithSeparator(string value1, string value2, string separator = ", ")
+        {
+            bool hasValue1 = !string.IsNullOrWhiteSpace(value1);
+            bool hasValue2 = !string.IsNullOrWhiteSpace(value2);
+
+            if (hasValue1 && hasValue2)
+                return $"{value1}{separator}{value2}";
+            if (hasValue1)
+                return value1;
+            if (hasValue2)
+                return value2;
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Resolves the delivery name and address fields based on the following priority logic:
+        /// 
+        /// 1. If FullName + Company both present:
+        ///    Col 9 = FullName, Col 10 = Company, Col 11 = Address1, Col 12 = Address2, Col 13 = Address3 + Town (concatenated)
+        /// 
+        /// 2. If FullName only (no Company):
+        ///    Col 9 = FullName, Col 10 = Address1, Col 11 = Address2, Col 12 = Address3, Col 13 = Town
+        /// 
+        /// 3. If Company only (no FullName):
+        ///    Col 9 = Company, Col 10 = Address1, Col 11 = Address2, Col 12 = Address3, Col 13 = Town
+        /// 
+        /// 4. If neither FullName nor Company:
+        ///    Col 9 = Address1, Col 10 = Address2, Col 11 = Address3, Col 12 = Town, Col 13 = empty
+        /// 
+        /// Returns a tuple with: (Column9, Column10, Column11, Column12, Column13)
+        /// </summary>
+        private (string Col9, string Col10, string Col11, string Col12, string Col13) ResolveDeliveryNameAndAddress(OrderDetails ods)
+        {
+            string fullName = SafeGetAddressString(ods, "FullName");
+            string company = SafeGetAddressString(ods, "Company");
+            string addr1 = SafeGetAddressString(ods, "Address1");
+            string addr2 = SafeGetAddressString(ods, "Address2");
+            string addr3 = SafeGetAddressString(ods, "Address3");
+            string town = SafeGetAddressString(ods, "Town");
+
+            bool hasFullName = !string.IsNullOrWhiteSpace(fullName);
+            bool hasCompany = !string.IsNullOrWhiteSpace(company);
+
+            string col9, col10, col11, col12, col13;
+
+            if (hasFullName && hasCompany)
+            {
+                // Scenario 1: Both FullName and Company present
+                // Name in col 9, Company in col 10, addresses shift down, concatenate Address3 + Town for col 13
+                col9 = fullName;
+                col10 = company;
+                col11 = addr1;
+                col12 = addr2;
+                col13 = ConcatenateWithSeparator(addr3, town);
+            }
+            else if (hasFullName && !hasCompany)
+            {
+                // Scenario 2: FullName only, no Company
+                // Normal flow: Name, Address1, Address2, Address3, Town
+                col9 = fullName;
+                col10 = addr1;
+                col11 = addr2;
+                col12 = addr3;
+                col13 = town;
+            }
+            else if (!hasFullName && hasCompany)
+            {
+                // Scenario 3: Company only, no FullName
+                // Company in col 9, then addresses flow normally
+                col9 = company;
+                col10 = addr1;
+                col11 = addr2;
+                col12 = addr3;
+                col13 = town;
+            }
+            else
+            {
+                // Scenario 4: Neither FullName nor Company
+                // Address lines shift up: Address1 becomes col 9
+                col9 = addr1;
+                col10 = addr2;
+                col11 = addr3;
+                col12 = town;
+                col13 = string.Empty;
+            }
+
+            return (col9, col10, col11, col12, col13);
+        }
+
+        /// <summary>
         /// Builds the order mapping for CSV export. Returns false if order should be skipped due to errors.
         /// </summary>
         private bool BuildOrderMapping(
@@ -365,6 +468,9 @@ namespace LinnworksMacro
                 string deliveryTelephone = GetTelephoneFromOrder(ods);
                 string deliveryEmail = GetEmailFromOrder(ods);
                 if (string.IsNullOrWhiteSpace(deliveryEmail)) deliveryEmail = "noreply@uwhome.com";
+
+                // Use the new delivery name/address resolution logic
+                var (col9, col10, col11, col12, col13) = ResolveDeliveryNameAndAddress(ods);
 
                 string deliveryTown = SafeGetAddressString(ods, "Town");
                 string deliveryCounty = SafeGetAddressString(ods, "Region");
@@ -398,11 +504,11 @@ namespace LinnworksMacro
                     Postal_Service = postalService,
                     Blank1 = string.Empty,
                     Blank2 = string.Empty,
-                    Delivery_Customer_Name = SafeGetAddressString(ods, "FullName"),
-                    Delivery_Address1 = SafeGetAddressString(ods, "Address1"),
-                    Delivery_Address2 = SafeGetAddressString(ods, "Address2"),
-                    Delivery_Address3 = SafeGetAddressString(ods, "Address3"),
-                    Delivery_Address4 = SafeGetAddressString(ods, "Town"),
+                    Delivery_Customer_Name = col9,      // Column 9 - Name/Company/Address1
+                    Delivery_Address1 = col10,          // Column 10 - Company/Address1/Address2
+                    Delivery_Address2 = col11,          // Column 11 - Address1/Address2/Address3
+                    Delivery_Address3 = col12,          // Column 12 - Address2/Address3/Town
+                    Delivery_Address4 = col13,          // Column 13 - Address3+Town/Town/empty
                     Delivery_Postcode = SafeGetAddressString(ods, "PostCode"),
                     Blank3 = string.Empty,
                     Blank4 = string.Empty,
@@ -594,6 +700,8 @@ namespace LinnworksMacro
                 {
                     case "FullName":
                         try { string v = addr.FullName; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { } break;
+                    case "Company":
+                        try { string v = addr.Company; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { } break;
                     case "Address1":
                         try { string v = addr.Address1; if (!string.IsNullOrWhiteSpace(v)) return v; } catch { } break;
                     case "Address2":
