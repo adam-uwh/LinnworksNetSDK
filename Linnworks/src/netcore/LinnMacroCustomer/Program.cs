@@ -14,7 +14,7 @@ namespace LinnMacroCustomer
             var macro = SetupMacro(applicationId, secretKey, token);
 
             //////////////////////////////////////////////////////////////////////////////
-            /// Configure Parameters for UW Home Linnworks Default Channel Updater Macro 
+            /// Configure Parameters for UW Home Linnworks Default Channel Updater Macro /
             /// //////////////////////////////////////////////////////////////////////////
             
             /// Parameters
