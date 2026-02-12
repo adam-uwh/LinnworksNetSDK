@@ -16,7 +16,7 @@ namespace LinnMacroCustomer
             //////////////////////////////////////////////////////////////////////////////
             /// Configure Parameters for UW Home Linnworks Default Channel Updater Macro 
             /// //////////////////////////////////////////////////////////////////////////
-            /*
+            
             /// Parameters
             string Source = "DATAIMPORTEXPORT";
             string subSource = "MultiVery";
@@ -41,7 +41,7 @@ namespace LinnMacroCustomer
             string shippedDirectory = "Notify-Shipped";
             string actionCancelledDirectory = "Notify-Cancelled";
             string cancelDirectory = "Notify-Cancelled";
-            string filetype = "Direct";
+            string filetype = "XML";
             string sortField = "GENERAL_INFO_ORDER_ID";
             string sortDirection = "ASC";
             int lookBackDays = 14;
@@ -84,7 +84,7 @@ namespace LinnMacroCustomer
             emailRecipientGuid
             );
 
-            */
+            
             //////////////////////////////////////////////////////////////////////////////
             /// END Configure Parameters for UW Home Linnworks Default Channel Updater Macro  
             /// //////////////////////////////////////////////////////////////////////////
@@ -137,7 +137,7 @@ namespace LinnMacroCustomer
             /// Configure Parameters for UW Home B2B JDE Export Macro 
             /// //////////////////////////////////////////////////////////////////////////
             // Set required variables
-            
+            /*
             string SFTPServer            = "sftp.jrslsecure.com/";
             int    SFTPPort              = 22;
             string SFTPUsername          = "Ecommerce";
@@ -176,7 +176,7 @@ namespace LinnMacroCustomer
                 folderError,
                 ignoreUnknownSKUs
             );
-            
+            */
             //////////////////////////////////////////////////////////////////////////////
             /// END Configure Parameters for UW Home B2B JDE Export Macro 
             /// //////////////////////////////////////////////////////////////////////////

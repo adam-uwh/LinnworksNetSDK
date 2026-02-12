@@ -1,4 +1,4 @@
-﻿// UW Home Shop Direct Channel Updater Macro
+// UW Home Shop Direct Channel Updater Macro
 // =============================================
 // 
 // SUMMARY:   
